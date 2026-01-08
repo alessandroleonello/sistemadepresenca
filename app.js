@@ -5709,7 +5709,11 @@ async function approveCoordinator(userId) {
         logActivity('Aprovar Coordenador', `ID Usuário: ${userId}`, 'sistema');
         loadPendingCoordinators();
     } catch (error) {
-        showToast('Erro ao aprovar: ' + error.message, 'error');
+        if (error.code === 'permission-denied') {
+            showToast('Permissão negada. Atualize as Regras de Segurança no Firebase Console.', 'error');
+        } else {
+            showToast('Erro ao aprovar: ' + error.message, 'error');
+        }
     }
 }
 
@@ -5720,7 +5724,11 @@ async function rejectCoordinator(userId) {
             logActivity('Rejeitar Coordenador', `ID Usuário: ${userId}`, 'sistema');
             loadPendingCoordinators();
         } catch (error) {
-            showToast('Erro ao rejeitar: ' + error.message, 'error');
+            if (error.code === 'permission-denied') {
+                showToast('Permissão negada. Atualize as Regras de Segurança no Firebase Console.', 'error');
+            } else {
+                showToast('Erro ao rejeitar: ' + error.message, 'error');
+            }
         }
     }
 }
