@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2250%22 fill=%22%2328a745%22/><path d=%22M30 50 L45 65 L70 35%22 stroke=%22white%22 stroke-width=%2210%22 fill=%22none%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>">
+    <title>Sistema de Presença</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Tela de Login -->
+    <div id="loginScreen" class="screen active">
+        <div class="login-container">
+            <div class="login-box">
+                <h1 class="login-title">Sistema de Presença</h1>
+                <p class="login-subtitle">Gerenciamento de eventos e frequência</p>
+                
+                <div class="login-form">
+                    <input type="email" id="loginEmail" placeholder="E-mail" class="input-field">
+                    <input type="password" id="loginPassword" placeholder="Senha" class="input-field">
+                    <div style="text-align: right; margin-top: -0.5rem; margin-bottom: 0.5rem;">
+                        <a href="#" onclick="showForgotPasswordModal()" style="color: var(--text-secondary); font-size: 0.9rem; text-decoration: none;">Esqueci minha senha</a>
+                    </div>
+                    <button id="btnLogin" onclick="handleLogin()" class="btn-primary">Entrar</button>
+                    <button onclick="showRegisterForm()" class="btn-secondary">Criar Conta com E-mail</button>
+                    <div style="display: flex; align-items: center; text-align: center; color: var(--text-secondary); font-size: 0.8rem; margin: 0.5rem 0;">
+                        <hr style="flex: 1; border: none; border-top: 1px solid var(--border);">
+                        <span style="padding: 0 10px;">OU</span>
+                        <hr style="flex: 1; border: none; border-top: 1px solid var(--border);">
+                    </div>
+                    <button onclick="handleGoogleLogin()" class="btn-secondary" style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24s8.955,20,20,20s20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/><path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/><path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.223,0-9.657-3.356-11.303-8H6.306C9.656,39.663,16.318,44,24,44z"/><path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571l6.19,5.238C44.982,36.352,48,30.666,48,24C48,22.659,47.862,21.35,47.611,20.083z"/></svg>
+                        <span>Entrar com Google</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tela de Aprovação Pendente -->
+    <div id="pendingScreen" class="screen">
+        <div class="login-container">
+            <div class="login-box" style="text-align: center;">
+                <div style="font-size: 4rem; margin-bottom: 1rem;">⏳</div>
+                <h1 class="login-title">Aguardando Aprovação</h1>
+                <p class="login-subtitle">Sua solicitação para entrar no grupo foi enviada.</p>
+                <p style="margin-bottom: 2rem; color: var(--text-secondary);">Aguarde a aprovação do administrador para acessar o sistema.</p>
+                <button onclick="checkApprovalStatus()" class="btn-primary" style="width: 100%; margin-bottom: 10px;">Verificar Status</button>
+                <button onclick="handleLogout()" class="btn-secondary" style="width: 100%;">Sair</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tela Principal -->
+    <div id="mainScreen" class="screen">
+        <div id="sidebarOverlay" class="sidebar-overlay" onclick="toggleMobileMenu()"></div>
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2 id="groupNameSidebar">Grupo JCC</h2>
+                <button id="sidebarToggleBtn" class="btn-icon" title="Recolher Menu">☰</button>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="#" onclick="showSection('dashboard')" class="nav-item active" data-section="dashboard">
+                    <span class="nav-icon">📊</span>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#" onclick="showSection('destaques')" class="nav-item" data-section="destaques">
+                    <span class="nav-icon">🏆</span>
+                    <span>Destaques</span>
+                </a>
+                <a href="#" onclick="showSection('pessoas')" class="nav-item" data-section="pessoas">
+                    <span class="nav-icon">👥</span>
+                    <span>Pessoas</span>
+                </a>
+                <a href="#" onclick="showSection('eventos')" class="nav-item" data-section="eventos">
+                    <span class="nav-icon">📅</span>
+                    <span>Eventos</span>
+                </a>
+                <a href="#" onclick="showSection('checkin')" class="nav-item" data-section="checkin">
+                    <span class="nav-icon">✓</span>
+                    <span>Check-in</span>
+                </a>
+                <a href="#" onclick="showSection('ministerios')" class="nav-item" data-section="ministerios">
+                    <span class="nav-icon">⛪</span>
+                    <span>Ministérios</span>
+                </a>
+                <a href="#" onclick="showSection('configuracoes')" class="nav-item" data-section="configuracoes">
+                    <span class="nav-icon">⚙️</span>
+                    <span>Configurações</span>
+                    <span id="configBadge" class="badge badge-danger" style="display:none; margin-left: auto; font-size: 0.75rem; padding: 2px 6px;">0</span>
+                </a>
+                <a href="#" onclick="showSection('logs')" class="nav-item" data-section="logs">
+                    <span class="nav-icon">📋</span>
+                    <span>Logs de Atividade</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <button id="themeToggleBtn" onclick="toggleTheme()" class="btn-secondary" style="width: 100%; margin-bottom: 10px;">🌙 Modo Escuro</button>
+                <button onclick="handleLogout()" class="btn-logout">Sair</button>
+            </div>
+        </aside>
+
+        <!-- Conteúdo Principal -->
+        <main class="main-content">
+            <div class="mobile-header">
+                <button class="btn-icon" onclick="toggleMobileMenu()">☰</button>
+                <h2 id="groupNameMobile">Grupo JCC</h2>
+            </div>
+            <!-- Dashboard -->
+            <section id="dashboard" class="content-section active">
+                <div class="section-header">
+                    <h1>Dashboard</h1>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button id="btnEditLayout" onclick="toggleEditLayout()" class="btn-secondary">Editar Layout</button>
+                        <button id="btnResetLayout" onclick="resetDashboardLayout()" class="btn-secondary" style="display: none;">Resetar Padrão</button>
+                    </div>
+                </div>
+                
+                <div class="dashboard-grid">
+                    <div class="stat-card" onclick="showSection('pessoas'); showPessoaTab('lista')" style="cursor: pointer;">
+                        <div class="stat-icon">👥</div>
+                        <div class="stat-content">
+                            <h3 id="totalPessoas">0</h3>
+                            <p>Total de Pessoas</p>
+                        </div>
+                    </div>
+                    <div class="stat-card" onclick="showSection('eventos'); showEventoTab('lista')" style="cursor: pointer;">
+                        <div class="stat-icon">📅</div>
+                        <div class="stat-content">
+                            <h3 id="totalEventos">0</h3>
+                            <p>Eventos Cadastrados</p>
+                        </div>
+                    </div>
+                    <div class="stat-card" onclick="showSection('pessoas'); showPessoaTab('relatorio')" style="cursor: pointer;">
+                        <div class="stat-icon">⚠️</div>
+                        <div class="stat-content">
+                            <h3 id="baixaFrequencia">0</h3>
+                            <p>Baixa Frequência</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dashboard-sections" id="dashboardGrid">
+                    <div class="dashboard-card" id="card-actions" style="grid-column: 1 / -1;">
+                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                            <button class="btn-icon toggle-card-btn" onclick="toggleCard(this)">➖</button>
+                            <h2 style="margin: 0;">⚡ Ações Rápidas</h2>
+                        </div>
+                        <div class="card-content actions-grid">
+                            <button onclick="showPessoaForm()" class="btn-primary action-btn">👤 Nova Pessoa</button>
+                            <button onclick="showEventoForm()" class="btn-primary action-btn">📅 Novo Evento</button>
+                            <button onclick="showSection('checkin')" class="btn-secondary action-btn">✅ Fazer Check-in</button>
+                            <button onclick="showSection('pessoas'); showPessoaTab('relatorio')" class="btn-secondary action-btn">📈 Relatórios</button>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-card" id="card-proximos">
+                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                            <button class="btn-icon toggle-card-btn" onclick="toggleCard(this)">➖</button>
+                            <h2 style="margin: 0;">Próximos Eventos</h2>
+                        </div>
+                        <div id="proximosEventos" class="eventos-list card-content">
+                            <!-- Eventos carregados dinamicamente -->
+                        </div>
+                    </div>
+
+                    <div class="dashboard-card" id="card-aniversariantes">
+                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                            <button class="btn-icon toggle-card-btn" onclick="toggleCard(this)">➖</button>
+                            <h2 style="margin: 0;">🎉 Aniversariantes do Mês</h2>
+                        </div>
+                        <div id="aniversariantesMes" class="pessoas-list card-content">
+                            <!-- Aniversariantes carregados dinamicamente -->
+                        </div>
+                    </div>
+
+                    <div class="dashboard-card" id="card-ministerios">
+                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                            <button class="btn-icon toggle-card-btn" onclick="toggleCard(this)">➖</button>
+                            <h2 style="margin: 0;">⛪ Distribuição por Ministério</h2>
+                        </div>
+                        <div id="ministeriosChart" class="card-content">
+                            <!-- Gráfico carregado dinamicamente -->
+                        </div>
+                    </div>
+
+                    <div class="dashboard-card" id="card-baixa-freq">
+                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                            <button class="btn-icon toggle-card-btn" onclick="toggleCard(this)">➖</button>
+                            <h2 style="margin: 0;">Pessoas com Baixa Frequência</h2>
+                        </div>
+                        <div id="pessoasBaixaFrequencia" class="pessoas-list card-content">
+                            <!-- Pessoas carregadas dinamicamente -->
+                        </div>
+                    </div>
+
+                    <div class="dashboard-card" id="card-top3-summary" style="grid-column: 1 / -1;">
+                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                            <button class="btn-icon toggle-card-btn" onclick="toggleCard(this)">➖</button>
+                            <h2 style="margin: 0;">🏆 Top 3 do Mês</h2>
+                        </div>
+                        <div id="top3SummaryContent" class="card-content">
+                            <!-- Resumo carregado dinamicamente -->
+                        </div>
+                    </div>
+
+                    <div class="dashboard-card" id="card-chart" style="grid-column: 1 / -1;">
+                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                            <button class="btn-icon toggle-card-btn" onclick="toggleCard(this)">➖</button>
+                            <h2 style="margin: 0;">📊 Média de Presença (Últimos 5 Eventos)</h2>
+                        </div>
+                        <div id="attendanceChart" class="card-content">
+                            <!-- Gráfico carregado dinamicamente -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Destaques -->
+            <section id="destaques" class="content-section">
+                <div class="section-header">
+                    <h1>Destaques</h1>
+                </div>
+                
+                <div class="dashboard-sections">
+                    <div class="dashboard-card" id="card-destaques" style="grid-column: 1 / -1;">
+                        <div class="section-header" style="margin-bottom: 15px;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <button class="btn-icon toggle-card-btn" onclick="toggleCard(this)">➖</button>
+                                <h2 style="margin-bottom: 0;">🏆 Servos Destaque</h2>
+                            </div>
+                            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                <input type="date" id="destaqueInicio" class="input-field" style="padding: 5px; max-width: 150px;">
+                                <span style="font-size: 12px;">até</span>
+                                <input type="date" id="destaqueFim" class="input-field" style="padding: 5px; max-width: 150px;">
+                                <label style="display: flex; align-items: center; gap: 5px; font-size: 0.9rem; cursor: pointer; user-select: none;">
+                                    <input type="checkbox" id="destaque100Only"> Apenas 100%
+                                </label>
+                                <button onclick="loadServosDestaque()" class="btn-secondary" style="padding: 5px 10px; font-size: 14px;">Filtrar</button>
+                            </div>
+                        </div>
+                        <div id="servosDestaqueList" class="ranking-list card-content"></div>
+                    </div>
+
+                    <div class="dashboard-card" id="card-destaques-participantes" style="grid-column: 1 / -1;">
+                        <div class="section-header" style="margin-bottom: 15px;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <button class="btn-icon toggle-card-btn" onclick="toggleCard(this)">➖</button>
+                                <h2 style="margin-bottom: 0;">🏆 Participantes Destaque</h2>
+                            </div>
+                            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                <input type="date" id="destaquePartInicio" class="input-field" style="padding: 5px; max-width: 150px;">
+                                <span style="font-size: 12px;">até</span>
+                                <input type="date" id="destaquePartFim" class="input-field" style="padding: 5px; max-width: 150px;">
+                                <label style="display: flex; align-items: center; gap: 5px; font-size: 0.9rem; cursor: pointer; user-select: none;">
+                                    <input type="checkbox" id="destaquePart100Only"> Apenas 100%
+                                </label>
+                                <button onclick="loadParticipantesDestaque()" class="btn-secondary" style="padding: 5px 10px; font-size: 14px;">Filtrar</button>
+                            </div>
+                        </div>
+                        <div id="participantesDestaqueList" class="ranking-list card-content"></div>
+                    </div>
+
+                    <div class="dashboard-card" id="card-destaques-ministerios" style="grid-column: 1 / -1;">
+                        <div class="section-header" style="margin-bottom: 15px;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <button class="btn-icon toggle-card-btn" onclick="toggleCard(this)">➖</button>
+                                <h2 style="margin-bottom: 0;">🏆 Ministério Destaque</h2>
+                            </div>
+                            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                <input type="date" id="destaqueMinInicio" class="input-field" style="padding: 5px; max-width: 150px;">
+                                <span style="font-size: 12px;">até</span>
+                                <input type="date" id="destaqueMinFim" class="input-field" style="padding: 5px; max-width: 150px;">
+                                <button onclick="loadMinisteriosDestaque()" class="btn-secondary" style="padding: 5px 10px; font-size: 14px;">Filtrar</button>
+                            </div>
+                        </div>
+                        <div id="ministeriosDestaqueList" class="ranking-list card-content"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Pessoas -->
+            <section id="pessoas" class="content-section">
+                <div class="section-header">
+                    <h1>Pessoas</h1>
+                    <div style="display: flex; gap: 10px;">
+                        <button onclick="exportPessoasCSV()" class="btn-secondary" title="Exportar para Excel/CSV">📥 Exportar</button>
+                        <button onclick="showPessoaForm()" class="btn-primary">+ Nova Pessoa</button>
+                    </div>
+                </div>
+
+                <div class="tabs">
+                    <button class="tab active" onclick="showPessoaTab('lista')">Lista</button>
+                    <button class="tab" onclick="showPessoaTab('relatorio')">Relatório de Frequência</button>
+                    <button class="tab" onclick="showPessoaTab('aniversarios')">Aniversários</button>
+                    <button class="tab" onclick="showPessoaTab('importacao')">Importação em Lote</button>
+                </div>
+
+                <!-- Lista de Pessoas -->
+                <div id="pessoaLista" class="tab-content active">
+                    <div class="filters">
+                        <input type="text" id="searchPessoa" placeholder="Buscar por nome..." class="input-field">
+                        <select id="filterOrdem" class="input-field" onchange="loadPessoas()">
+                            <option value="nome">Ordenar por Nome</option>
+                            <option value="idade">Ordenar por Idade</option>
+                        </select>
+                        <select id="filterMinisterio" class="input-field" onchange="handleMinisterioSelect(this.value)">
+                            <option value="">Todos os Ministérios</option>
+                        </select>
+                        <select id="itemsPerPage" class="input-field" onchange="loadPessoas()">
+                            <option value="10">10 por página</option>
+                            <option value="20">20 por página</option>
+                            <option value="50">50 por página</option>
+                        </select>
+                        <button onclick="toggleCoordinatorFilter()" id="btnCoordinatorFilter" class="btn-secondary" title="Filtrar Coordenadores">👤 Coordenadores</button>
+                        <button onclick="toggleSelectionMode()" class="btn-secondary" id="btnSelecionar">Modo Seleção</button>
+                        <div style="display: flex; gap: 5px; margin-left: auto;">
+                            <button class="btn-icon" id="btnPessoaViewCards" onclick="setPessoaView('cards')" title="Visualização em Cards">📅</button>
+                            <button class="btn-icon active" id="btnPessoaViewList" onclick="setPessoaView('list')" title="Visualização em Lista">☰</button>
+                        </div>
+                    </div>
+
+                    <div id="selectionActions" class="selection-actions" style="display:none;">
+                        <button onclick="deleteSelected()" class="btn-danger">Excluir Selecionados</button>
+                        <button onclick="printSelectedBarcodes()" class="btn-primary">🖨️ Imprimir Códigos</button>
+                        <button onclick="cancelSelection()" class="btn-secondary">Cancelar</button>
+                    </div>
+
+                    <div id="pessoasTable" class="table-container">
+                        <!-- Tabela carregada dinamicamente -->
+                    </div>
+                </div>
+
+                <!-- Relatório de Frequência -->
+                <div id="pessoaRelatorio" class="tab-content">
+                    <div class="filters" style="margin-bottom: 1rem;">
+                        <select id="filterRelatorioOrdem" class="input-field" onchange="loadRelatorioFrequencia()">
+                            <option value="maior_freq">Maior Frequência</option>
+                            <option value="menor_freq">Menor Frequência</option>
+                            <option value="com_justificativa">Com Justificativas</option>
+                        </select>
+                    </div>
+                    <div class="relatorio-container" id="relatorioFrequencia">
+                        <!-- Relatório carregado dinamicamente -->
+                    </div>
+                </div>
+
+                <!-- Aba Aniversários -->
+                <div id="pessoaAniversarios" class="tab-content">
+                    <div style="display: flex; justify-content: flex-end; margin-bottom: 1rem;">
+                        <button onclick="exportAniversariantesPDF()" class="btn-secondary" title="Exportar PDF">📄 Exportar Lista Anual</button>
+                    </div>
+                    <div id="aniversariosList" class="aniversarios-grid">
+                        <!-- Conteúdo carregado dinamicamente -->
+                    </div>
+                </div>
+
+                <!-- Importação em Lote -->
+                <div id="pessoaImportacao" class="tab-content">
+                    <div class="config-container">
+                        <div class="config-card">
+                            <h3>Passo 1: Baixar Modelo</h3>
+                            <p class="help-text" style="margin-bottom: 1rem;">Baixe a planilha modelo padrão para preencher os dados das pessoas corretamente. Mantenha os cabeçalhos originais.</p>
+                            <button onclick="downloadImportTemplate()" class="btn-secondary">📄 Baixar Planilha Modelo</button>
+                        </div>
+
+                        <div class="config-card">
+                            <h3>Passo 2: Importar Arquivo</h3>
+                            <p class="help-text" style="margin-bottom: 1rem;">Selecione o arquivo Excel (.xlsx) ou CSV preenchido para importar para o sistema.</p>
+                            <button onclick="triggerImport()" class="btn-primary">📤 Selecionar Arquivo e Importar</button>
+                            <input type="file" id="importFile" accept=".xlsx, .xls, .csv" style="display: none;" onchange="handleImportFile(this)">
+                        </div>
+
+                        <div class="config-card" id="cardUndoImport" style="display: none; border-left: 4px solid var(--danger);">
+                            <h3>Desfazer Importação</h3>
+                            <p class="help-text" style="margin-bottom: 1rem;">Caso tenha ocorrido algum erro, você pode desfazer a última importação realizada.</p>
+                            <button onclick="undoLastImport()" id="btnUndoImport" class="btn-danger">↩️ Desfazer Última Importação</button>
+                        </div>
+
+                        <!-- Pré-visualização da Importação -->
+                        <div id="importPreviewContainer" class="config-card" style="display: none; border-left: 4px solid var(--primary);">
+                            <h3>Passo 3: Pré-visualização</h3>
+                            <p class="help-text">Verifique os dados abaixo. Registros duplicados ou inválidos serão ignorados.</p>
+                            
+                            <div class="table-container" style="max-height: 400px; overflow-y: auto; margin: 1rem 0;">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Nome</th>
+                                            <th>Telefone</th>
+                                            <th>Tipo</th>
+                                            <th>Ministérios</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="importPreviewBody"></tbody>
+                                </table>
+                            </div>
+                            
+                            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                                <button onclick="confirmImport()" class="btn-primary">✅ Confirmar Importação</button>
+                                <button onclick="cancelImport()" class="btn-secondary">❌ Cancelar</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Eventos -->
+            <section id="eventos" class="content-section">
+                <div class="section-header">
+                    <h1>Eventos</h1>
+                    <button onclick="showEventoForm()" class="btn-primary">+ Novo Evento</button>
+                </div>
+
+                <div class="tabs">
+                    <button class="tab active" onclick="showEventoTab('lista')">Lista</button>
+                    <button class="tab" onclick="showEventoTab('criar')">Criar Evento</button>
+                </div>
+
+                <!-- Lista de Eventos -->
+                <div id="eventoLista" class="tab-content active">
+                    <div class="filters">
+                        <input type="text" id="searchEvento" placeholder="Buscar evento..." class="input-field">
+                        <select id="filterEventType" class="input-field" onchange="loadEventos()">
+                            <option value="">Todos os Tipos</option>
+                        </select>
+                        <select id="filterTargetAudience" class="input-field" onchange="loadEventos()">
+                            <option value="">Todos os Públicos</option>
+                            <option value="todos">Para Todos</option>
+                            <option value="servos">Apenas Servos</option>
+                            <option value="ministerio_especifico">Específico de Ministério</option>
+                            <option value="baixa_adesao">⚠️ Baixa Adesão (< 50%)</option>
+                        </select>
+                        <select id="eventosItemsPerPage" class="input-field" onchange="loadEventos()">
+                            <option value="5">5 por página</option>
+                            <option value="10" selected>10 por página</option>
+                            <option value="20">20 por página</option>
+                        </select>
+                        <button onclick="toggleEventSortOrder()" id="btnEventSort" class="btn-secondary" title="Ordenar: Mais recentes primeiro">⬇️ Data</button>
+                        <button onclick="toggleEventoSelectionMode()" class="btn-secondary" id="btnSelecionarEventos">Modo Seleção</button>
+                        <div style="display: flex; gap: 5px; margin-left: auto;">
+                            <button class="btn-icon active" id="btnViewCards" onclick="setEventoView('cards')" title="Visualização em Cards">📅</button>
+                            <button class="btn-icon" id="btnViewList" onclick="setEventoView('list')" title="Visualização em Lista">☰</button>
+                        </div>
+                    </div>
+
+                    <div id="eventoSelectionActions" class="selection-actions" style="display:none;">
+                        <button onclick="compareSelectedEventos()" class="btn-primary">📊 Comparar Selecionados</button>
+                        <button onclick="cancelEventoSelection()" class="btn-secondary">Cancelar</button>
+                    </div>
+
+                    <div id="eventosTable" class="eventos-timeline">
+                        <!-- Eventos carregados dinamicamente -->
+                    </div>
+                </div>
+
+                <!-- Formulário de Criar Evento -->
+                <div id="eventoCriar" class="tab-content">
+                    <div class="form-container">
+                        <h2>Criar Novo Evento</h2>
+                        <!-- Formulário inline -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Check-in -->
+            <section id="checkin" class="content-section">
+                <div class="section-header">
+                    <h1>Check-in</h1>
+                </div>
+
+                <div class="checkin-container">
+                    <div class="checkin-event-selector">
+                        <label>Selecione o Evento:</label>
+                        <select id="checkinEvento" class="input-field" onchange="loadCheckinEvent()">
+                            <option value="">Selecione um evento...</option>
+                        </select>
+                    </div>
+
+                    <div id="checkinInterface" class="checkin-interface" style="display:none;">
+                        <div class="checkin-methods">
+                            <button class="tab active" onclick="showCheckinMethod('busca')">Busca por Nome</button>
+                            <button class="tab" onclick="showCheckinMethod('codigo')">Código de Barras</button>
+                            <button class="tab" onclick="showCheckinMethod('novo')">Cadastro Rápido</button>
+                        </div>
+
+                        <!-- Busca por Nome -->
+                        <div id="checkinBusca" class="checkin-method active">
+                            <input type="text" id="searchCheckin" placeholder="Digite as 3 primeiras letras..." class="input-field-large">
+                            <div id="searchResults" class="search-results"></div>
+                        </div>
+
+                        <!-- Código de Barras -->
+                        <div id="checkinCodigo" class="checkin-method">
+                            <div style="text-align: center; margin-bottom: 1rem;">
+                                <button id="btnStartScanner" class="btn-primary" onclick="toggleBarcodeScanner()">📷 Abrir Câmera</button>
+                            </div>
+                            <div id="scanner-container" style="width: 100%; max-width: 500px; margin: 0 auto; display: none; margin-bottom: 1rem;">
+                                <div id="reader"></div>
+                            </div>
+                            <input type="text" id="barcodeInput" placeholder="Ou digite/escaneie aqui..." class="input-field-large" autofocus>
+                            <p class="help-text">Use a câmera ou posicione o cursor no campo para usar leitor USB.</p>
+                        </div>
+
+                        <!-- Cadastro Rápido -->
+                        <div id="checkinNovo" class="checkin-method">
+                            <input type="text" id="quickNome" placeholder="Nome completo" class="input-field">
+                            <input type="tel" id="quickTelefone" placeholder="Telefone" class="input-field">
+                            <button onclick="quickRegisterAndCheckin()" class="btn-primary">Cadastrar e Fazer Check-in</button>
+                        </div>
+
+                        <div class="checkin-list">
+                            <h3>Presenças Registradas (<span id="checkinCount">0</span>)</h3>
+                            <div id="checkinList" class="checkin-items">
+                                <!-- Lista de check-ins -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Ministérios -->
+            <section id="ministerios" class="content-section">
+                <div class="section-header">
+                    <h1>Ministérios <span id="totalMinisteriosBadge" class="badge badge-primary" style="font-size: 0.6em; vertical-align: middle;">0</span></h1>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <div style="display: flex; gap: 5px;">
+                            <button class="btn-icon active" id="btnMinViewCards" onclick="setMinisterioView('cards')" title="Visualização em Cards">📅</button>
+                            <button class="btn-icon" id="btnMinViewList" onclick="setMinisterioView('list')" title="Visualização em Lista">☰</button>
+                        </div>
+                        <button onclick="showMinisterioForm()" class="btn-primary">+ Novo Ministério</button>
+                    </div>
+                </div>
+
+                <div id="ministeriosList" class="ministerios-grid">
+                    <!-- Ministérios carregados dinamicamente -->
+                </div>
+            </section>
+
+            <!-- Configurações -->
+            <section id="configuracoes" class="content-section">
+                <div class="section-header">
+                    <h1>Configurações</h1>
+                </div>
+
+                <div class="config-container">
+                    <div class="config-card">
+                        <h3>Nome do Grupo</h3>
+                        <input type="text" id="configGroupName" class="input-field" placeholder="Nome do grupo">
+                        <button onclick="updateGroupName()" class="btn-primary">Salvar Nome</button>
+                    </div>
+
+                    <div class="config-card">
+                        <h3>Código do Grupo</h3>
+                        <div class="group-code-display">
+                            <p>Compartilhe este código com coordenadores:</p>
+                            <div class="code-box">
+                                <span id="groupCodeDisplay">------</span>
+                                <button onclick="copyGroupCode()" class="btn-icon">📋</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="config-card">
+                        <h3>Perfil do Usuário</h3>
+                        <p><strong>Email:</strong> <span id="userEmail"></span></p>
+                        <p><strong>Tipo:</strong> <span id="userType"></span></p>
+                    </div>
+
+                    <div class="config-card">
+                        <h3>Preferências</h3>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="configDisableGuestConfirm" onchange="toggleGuestConfirm(this.checked)" style="width: 18px; height: 18px;">
+                            <label for="configDisableGuestConfirm" style="cursor: pointer;">Desativar confirmação de convidado (Check-in mais rápido)</label>
+                        </div>
+                    </div>
+
+                    <div class="config-card">
+                        <h3>Mensagens Personalizadas</h3>
+                        <div class="form-group">
+                            <label>Mensagem de Aniversário</label>
+                            <div class="emoji-input-container">
+                                <textarea id="configBirthdayMessage" class="input-field" rows="3" placeholder="Parabéns {nome}! 🎉 Que Deus te abençoe muito neste dia especial!"></textarea>
+                                <button class="btn-icon emoji-btn" onclick="toggleEmojiPicker('configBirthdayMessage', this)" title="Inserir Emoji">😀</button>
+                            </div>
+                            <p class="help-text">Use {nome} para substituir pelo primeiro nome da pessoa.</p>
+                        </div>
+                        <div class="form-group">
+                            <label>Mensagem de Baixa Frequência</label>
+                            <div class="emoji-input-container">
+                                <textarea id="configLowFreqMessage" class="input-field" rows="3" placeholder="Olá {nome}, sentimos sua falta nos últimos eventos! Está tudo bem?"></textarea>
+                                <button class="btn-icon emoji-btn" onclick="toggleEmojiPicker('configLowFreqMessage', this)" title="Inserir Emoji">😀</button>
+                            </div>
+                            <p class="help-text">Use {nome} para substituir pelo primeiro nome da pessoa.</p>
+                        </div>
+                        <button onclick="saveCustomMessages()" class="btn-primary">Salvar Mensagens</button>
+                    </div>
+
+                    <div class="config-card" id="pendingCoordinators" style="display:none;">
+                        <h3>Coordenadores Pendentes</h3>
+                        <div id="pendingList">
+                            <!-- Lista de coordenadores pendentes -->
+                        </div>
+                    </div>
+
+                    <div class="config-card" id="activeCoordinators" style="display:none;">
+                        <h3>Coordenadores Ativos</h3>
+                        <div id="activeList">
+                            <!-- Lista de coordenadores ativos -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Logs de Atividade -->
+            <section id="logs" class="content-section">
+                <div class="section-header">
+                    <h1>Logs de Atividade</h1>
+                    <div style="display: flex; gap: 10px;">
+                        <button onclick="showArchivedLogs()" class="btn-secondary" title="Ver logs arquivados">📂 Ver Arquivados</button>
+                        <button onclick="archiveOldLogs()" class="btn-danger" title="Arquivar logs antigos">🗄️ Arquivar Antigos (>30 dias)</button>
+                        <button onclick="loadActivityLogs()" class="btn-secondary" title="Atualizar">🔄 Atualizar</button>
+                    </div>
+                </div>
+
+                <div class="filters">
+                    <input type="text" id="filterLogUser" placeholder="Filtrar por usuário..." class="input-field" oninput="filterLogsClientSide()">
+                    <select id="filterLogAction" class="input-field" onchange="filterLogsClientSide()">
+                        <option value="">Todas as Ações</option>
+                        <option value="Criar">Criação</option>
+                        <option value="Editar">Edição</option>
+                        <option value="Excluir">Exclusão</option>
+                        <option value="Check-in">Check-in</option>
+                        <option value="Mensagem">Mensagens</option>
+                        <option value="Importação">Importação</option>
+                        <option value="Configurações">Configurações</option>
+                    </select>
+                    <input type="date" id="filterLogDate" class="input-field" onchange="filterLogsClientSide()">
+                </div>
+
+                <div class="table-container">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Data/Hora</th>
+                                <th>Usuário</th>
+                                <th>Ação</th>
+                                <th>Detalhes</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logsTableBody"></tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modal para Formulários -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close" onclick="closeModal()">&times;</span>
+            <div id="modalBody"></div>
+        </div>
+    </div>
+
+    <!-- Container de Notificações (Toasts) -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    
+    <!-- JsBarcode para geração de códigos de barras -->
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+    <!-- SheetJS para importação de Excel -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <!-- jsPDF para geração de PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    <!-- Html5-QRCode para leitura de câmera -->
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    
+    <!-- Scripts do aplicativo -->
+    <script src="firebase-config.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
