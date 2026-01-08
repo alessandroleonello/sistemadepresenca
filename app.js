@@ -26,6 +26,7 @@ let customBirthdayMessage = '';
 let customLowFreqMessage = '';
 let currentLogs = [];
 let isFullHistoryLoaded = false; // Controle para saber se carregamos tudo ou só recente
+let userPending = false; // Controle global de status pendente
 
 const TAG_PALETTE = [
     '#e0f2fe', // Sky
@@ -76,9 +77,14 @@ auth.onAuthStateChanged(async (user) => {
     if (user) {
         currentUser = user;
         try {
-            await loadUserData();
-            showScreen('main');
-            loadDashboard();
+            const userData = await loadUserData();
+            
+            if (userData && userData.pending) {
+                showScreen('pending');
+            } else if (userData) {
+                showScreen('main');
+                loadDashboard();
+            }
         } catch (error) {
             console.error("Erro ao carregar dados do usuário:", error);
             showToast("Erro ao carregar perfil. Verifique o console.", "error");
@@ -145,8 +151,13 @@ async function handleGoogleLogin() {
             }
             
             // Força recarregamento dos dados
-            await loadUserData();
-            loadDashboard();
+            const userData = await loadUserData();
+            if (userData && userData.pending) {
+                showScreen('pending');
+            } else {
+                showScreen('main');
+                loadDashboard();
+            }
         }
     } catch (error) {
         console.error("Erro no login Google:", error);
@@ -201,9 +212,14 @@ async function handleRegister() {
         }
         
         // Força o recarregamento dos dados agora que o grupo foi criado no banco
-        await loadUserData();
-        loadDashboard();
+        const userData = await loadUserData();
         
+        if (userData && userData.pending) {
+            showScreen('pending');
+        } else {
+            showScreen('main');
+            loadDashboard();
+        }
         closeModal();
     } catch (error) {
         showToast('Erro ao criar conta: ' + error.message, 'error');
@@ -276,6 +292,11 @@ async function loadUserData() {
     const userDoc = await db.collection('users').doc(currentUser.uid).get();
     const userData = userDoc.data();
     
+    // Atualizar estado global de pendência
+    if (userData) {
+        userPending = userData.pending === true;
+    }
+
     if (userData && userData.groupId) {
         currentGroupId = userData.groupId;
         
@@ -309,6 +330,7 @@ async function loadUserData() {
         loadEventTypeOptions();
         loadCardStates(); // Carregar estados salvos no banco
     }
+    return userData;
 }
 
 // ==================== NAVEGAÇÃO ====================
@@ -389,6 +411,13 @@ async function loadDashboard() {
         console.warn("loadDashboard chamado sem currentGroupId definido. Aguardando...");
         return;
     }
+
+    // Segurança: Não tentar carregar nada se o usuário estiver pendente
+    if (userPending) {
+        showScreen('pending');
+        return;
+    }
+
     console.log(`Carregando dashboard para o grupo: ${currentGroupId}`);
 
     try {
@@ -530,6 +559,17 @@ async function loadDashboard() {
     } catch (error) {
         console.error("Erro ao carregar dashboard:", error);
         if (error.code === 'permission-denied') {
+            // Verificar se o usuário está pendente (recuperação de estado)
+            if (currentUser) {
+                const userDoc = await db.collection('users').doc(currentUser.uid).get();
+                const userData = userDoc.data();
+                if (userData && userData.pending) {
+                    userPending = true;
+                    showScreen('pending');
+                    return;
+                }
+            }
+
             // Mensagem detalhada para ajudar a resolver
             const isTrackingIssue = !auth.currentUser; // Se deu erro de permissão e o usuário parece nulo
             if (isTrackingIssue) {
@@ -548,7 +588,7 @@ async function loadDashboard() {
                 `;
                 showModal(modalBody);
             } else {
-                showToast("Erro de Permissão: Verifique se os Índices do Firestore (groupId + data) existem no console do Firebase.", "error");
+                showToast("Erro de Acesso: Permissão negada. Verifique se você foi aprovado ou se os índices do banco estão criados.", "error");
             }
         } else if (error.code === 'failed-precondition') {
             // Erro comum quando falta índice composto no Firestore
@@ -2635,102 +2675,123 @@ function printBarcode() {
 
 // Histórico de presença
 async function showPessoaDetails(pessoaId) {
-    const pessoa = pessoas.find(p => p.id === pessoaId);
-    
-    const presencasSnapshot = await db.collection('presencas')
-        .where('groupId', '==', currentGroupId)
-        .where('pessoaId', '==', pessoaId)
-        .orderBy('timestamp', 'desc')
-        .get();
-    
-    const presencas = presencasSnapshot.docs.map(doc => doc.data());
-    
-    const eventosPresenca = await Promise.all(
-        presencas.map(async (p) => {
-            const eventoDoc = await db.collection('eventos').doc(p.eventoId).get();
-            const data = eventoDoc.data();
-            return data ? { ...data, id: eventoDoc.id } : null;
-        })
-    );
-    
-    const validEventos = eventosPresenca.filter(e => e !== null);
-    
-    const modalBody = `
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.5rem;">
-            <div style="display: flex; align-items: center; gap: 1rem;">
-                <div class="avatar" style="width: 60px; height: 60px; font-size: 1.5rem; background-color: ${getAvatarColor(pessoa.nome)}">${getInitials(pessoa.nome)}</div>
-                <div>
-                    <h2 style="margin: 0; font-size: 1.4rem;">${pessoa.nome}</h2>
-                    <span class="badge badge-${pessoa.tipo === 'servo' ? 'primary' : 'success'}">${pessoa.tipo === 'servo' ? 'Servo' : 'Participante'}</span>
+    try {
+        const pessoa = pessoas.find(p => p.id === pessoaId);
+        if (!pessoa) return;
+        
+        const presencasSnapshot = await db.collection('presencas')
+            .where('groupId', '==', currentGroupId)
+            .where('pessoaId', '==', pessoaId)
+            .orderBy('timestamp', 'desc')
+            .get();
+        
+        const presencas = presencasSnapshot.docs.map(doc => doc.data());
+        
+        const eventosPresenca = await Promise.all(
+            presencas.map(async (p) => {
+                try {
+                    const eventoDoc = await db.collection('eventos').doc(p.eventoId).get();
+                    if (eventoDoc.exists) {
+                        const data = eventoDoc.data();
+                        return { ...data, id: eventoDoc.id };
+                    } else {
+                        // Evento excluído - Retorna objeto placeholder para não quebrar a lista
+                        return { 
+                            id: p.eventoId, 
+                            nome: 'Evento Excluído', 
+                            data: null, 
+                            deleted: true 
+                        };
+                    }
+                } catch (e) {
+                    return { id: p.eventoId, nome: 'Erro ao carregar', data: null, deleted: true };
+                }
+            })
+        );
+        
+        // Não filtramos mais os nulos, para mostrar os excluídos
+        const validEventos = eventosPresenca;
+        
+        const modalBody = `
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.5rem;">
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <div class="avatar" style="width: 60px; height: 60px; font-size: 1.5rem; background-color: ${getAvatarColor(pessoa.nome)}">${getInitials(pessoa.nome)}</div>
+                    <div>
+                        <h2 style="margin: 0; font-size: 1.4rem;">${pessoa.nome}</h2>
+                        <span class="badge badge-${pessoa.tipo === 'servo' ? 'primary' : 'success'}">${pessoa.tipo === 'servo' ? 'Servo' : 'Participante'}</span>
+                    </div>
                 </div>
+                <button class="btn-icon" onclick="editPessoa('${pessoa.id}')" title="Editar">✏️</button>
             </div>
-            <button class="btn-icon" onclick="editPessoa('${pessoa.id}')" title="Editar">✏️</button>
-        </div>
 
-        <div style="background: var(--bg-tertiary); padding: 1.2rem; border-radius: 8px; margin-bottom: 1.5rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.2rem;">
-            <div>
-                <label class="help-text" style="display: block; margin-bottom: 4px;">Telefone</label>
-                <div style="font-weight: 500; display: flex; align-items: center; gap: 5px;">
-                    ${pessoa.telefone || '-'}
-                    ${pessoa.telefone ? `<button class="btn-icon" style="padding: 2px; width: 24px; height: 24px; font-size: 0.8em;" onclick="openPersonWhatsApp('${pessoa.nome}', '${pessoa.telefone}')" title="WhatsApp">📱</button>` : ''}
+            <div style="background: var(--bg-tertiary); padding: 1.2rem; border-radius: 8px; margin-bottom: 1.5rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.2rem;">
+                <div>
+                    <label class="help-text" style="display: block; margin-bottom: 4px;">Telefone</label>
+                    <div style="font-weight: 500; display: flex; align-items: center; gap: 5px;">
+                        ${pessoa.telefone || '-'}
+                        ${pessoa.telefone ? `<button class="btn-icon" style="padding: 2px; width: 24px; height: 24px; font-size: 0.8em;" onclick="openPersonWhatsApp('${pessoa.nome}', '${pessoa.telefone}')" title="WhatsApp">📱</button>` : ''}
+                    </div>
                 </div>
+                <div>
+                    <label class="help-text" style="display: block; margin-bottom: 4px;">Data de Nascimento</label>
+                    <div style="font-weight: 500;">${formatDate(pessoa.dataNascimento)} (${calculateAge(pessoa.dataNascimento)} anos)</div>
+                </div>
+                <div style="grid-column: 1 / -1;">
+                    <label class="help-text" style="display: block; margin-bottom: 4px;">Endereço</label>
+                    <div style="font-weight: 500;">${pessoa.endereco || '-'}</div>
+                </div>
+                ${pessoa.responsavel ? `
+                <div>
+                    <label class="help-text" style="display: block; margin-bottom: 4px;">Responsável</label>
+                    <div style="font-weight: 500;">${pessoa.responsavel}</div>
+                </div>
+                <div>
+                    <label class="help-text" style="display: block; margin-bottom: 4px;">Tel. Responsável</label>
+                    <div style="font-weight: 500;">${pessoa.telefoneResponsavel || '-'}</div>
+                </div>
+                ` : ''}
             </div>
-            <div>
-                <label class="help-text" style="display: block; margin-bottom: 4px;">Data de Nascimento</label>
-                <div style="font-weight: 500;">${formatDate(pessoa.dataNascimento)} (${calculateAge(pessoa.dataNascimento)} anos)</div>
-            </div>
-            <div style="grid-column: 1 / -1;">
-                <label class="help-text" style="display: block; margin-bottom: 4px;">Endereço</label>
-                <div style="font-weight: 500;">${pessoa.endereco || '-'}</div>
-            </div>
-            ${pessoa.responsavel ? `
-            <div>
-                <label class="help-text" style="display: block; margin-bottom: 4px;">Responsável</label>
-                <div style="font-weight: 500;">${pessoa.responsavel}</div>
-            </div>
-            <div>
-                <label class="help-text" style="display: block; margin-bottom: 4px;">Tel. Responsável</label>
-                <div style="font-weight: 500;">${pessoa.telefoneResponsavel || '-'}</div>
+
+            ${pessoa.tipo === 'servo' && pessoa.ministerios ? `
+            <div style="margin-bottom: 1.5rem;">
+                <h3 style="font-size: 1.1rem; margin-bottom: 0.8rem;">Ministérios</h3>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                    ${pessoa.ministerios.map(m => {
+                        const style = getMinisterioStyle(m);
+                        const className = style ? 'ministerio-tag' : `ministerio-tag ${getMinisterioColorClass(m)}`;
+                        return `<span class="${className}" style="${style}; font-size: 0.9rem; padding: 4px 10px;">${m}</span>`;
+                    }).join('')}
+                </div>
             </div>
             ` : ''}
-        </div>
 
-        ${pessoa.tipo === 'servo' && pessoa.ministerios ? `
-        <div style="margin-bottom: 1.5rem;">
-            <h3 style="font-size: 1.1rem; margin-bottom: 0.8rem;">Ministérios</h3>
-            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                ${pessoa.ministerios.map(m => {
-                    const style = getMinisterioStyle(m);
-                    const className = style ? 'ministerio-tag' : `ministerio-tag ${getMinisterioColorClass(m)}`;
-                    return `<span class="${className}" style="${style}; font-size: 0.9rem; padding: 4px 10px;">${m}</span>`;
-                }).join('')}
-            </div>
-        </div>
-        ` : ''}
-
-        <div style="border-top: 1px solid var(--border); padding-top: 1.5rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                <h3 style="font-size: 1.1rem; margin: 0;">Histórico de Presença</h3>
-                <span class="badge badge-${(pessoa.frequencia || 0) >= 50 ? 'success' : 'warning'}">Frequência: ${(pessoa.frequencia || 0).toFixed(1)}%</span>
-            </div>
-            
-            <div style="max-height: 250px; overflow-y: auto; padding-right: 5px;">
-                ${validEventos.length === 0 ? '<p class="help-text">Nenhum evento participado ainda</p>' : 
-                    validEventos.map(evento => `
-                        <div style="padding: 10px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
-                            <div>
-                                <div style="font-weight: 500;">${evento.nome}</div>
-                                <div style="font-size: 0.85rem; color: var(--text-secondary);">${formatDate(evento.data)}</div>
+            <div style="border-top: 1px solid var(--border); padding-top: 1.5rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h3 style="font-size: 1.1rem; margin: 0;">Histórico de Presença</h3>
+                    <span class="badge badge-${(pessoa.frequencia || 0) >= 50 ? 'success' : 'warning'}">Frequência: ${(pessoa.frequencia || 0).toFixed(1)}%</span>
+                </div>
+                
+                <div style="max-height: 250px; overflow-y: auto; padding-right: 5px;">
+                    ${validEventos.length === 0 ? '<p class="help-text">Nenhum evento participado ainda</p>' : 
+                        validEventos.map(evento => `
+                            <div style="padding: 10px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+                                <div>
+                                    <div style="font-weight: 500;">${evento.nome}</div>
+                                    <div style="font-size: 0.85rem; color: var(--text-secondary);">${evento.data ? formatDate(evento.data) : 'Data desconhecida'}</div>
+                                </div>
+                                <span class="badge badge-${evento.deleted ? 'danger' : 'success'}" style="font-size: 0.75rem;">${evento.deleted ? 'Excluído' : 'Presente'}</span>
                             </div>
-                            <span class="badge badge-success" style="font-size: 0.75rem;">Presente</span>
-                        </div>
-                    `).join('')
-                }
+                        `).join('')
+                    }
+                </div>
             </div>
-        </div>
-    `;
-    
-    showModal(modalBody);
+        `;
+        
+        showModal(modalBody);
+    } catch (error) {
+        console.error(error);
+        showToast('Erro ao carregar detalhes: ' + error.message, 'error');
+    }
 }
 
 // Tabs de pessoa
@@ -5661,6 +5722,93 @@ async function rejectCoordinator(userId) {
         } catch (error) {
             showToast('Erro ao rejeitar: ' + error.message, 'error');
         }
+    }
+}
+
+async function checkApprovalStatus() {
+    const btn = document.querySelector('#pendingScreen button');
+    if(btn) btn.disabled = true;
+    
+    try {
+        const userData = await loadUserData();
+        if (userData && !userData.pending) {
+            showToast('Aprovação confirmada!', 'success');
+            showScreen('main');
+            loadDashboard();
+        } else {
+            showToast('Ainda aguardando aprovação...', 'info');
+        }
+    } catch (e) {
+        console.error(e);
+    } finally {
+        if(btn) btn.disabled = false;
+    }
+}
+
+async function checkOrphanedPresences() {
+    // Garante que os dados estejam carregados
+    if (globalPresencas.length === 0) {
+        showToast('Carregando dados...', 'info');
+        await loadDashboard();
+    }
+
+    const activeEventIds = new Set(eventos.map(e => e.id));
+    const orphans = globalPresencas.filter(p => !activeEventIds.has(p.eventoId));
+    
+    if (orphans.length === 0) {
+        showToast('Nenhuma presença de evento excluído encontrada.', 'success');
+        return;
+    }
+    
+    // Agrupar por ID do Evento
+    const groups = {};
+    orphans.forEach(p => {
+        if (!groups[p.eventoId]) groups[p.eventoId] = [];
+        groups[p.eventoId].push(p.pessoaId);
+    });
+    
+    let html = `<h2>Presenças de Eventos Excluídos</h2>
+                <p class="help-text" style="margin-bottom: 1rem;">Estas pessoas têm presença marcada em eventos que foram excluídos. Você pode ver a lista abaixo.</p>
+                <div style="max-height: 400px; overflow-y: auto;">`;
+    
+    for (const [evtId, personIds] of Object.entries(groups)) {
+        const personNames = personIds.map(id => {
+            const p = pessoas.find(pes => pes.id === id);
+            return p ? p.nome : 'Pessoa Desconhecida';
+        }).sort().join(', ');
+        
+        html += `
+            <div class="card" style="margin-bottom: 10px; border-left: 4px solid #ef4444;">
+                <h4 style="margin-bottom: 5px;">Evento ID: ${evtId}</h4>
+                <p style="margin-bottom: 5px;"><strong>${personIds.length} pessoas presentes:</strong></p>
+                <p class="help-text" style="background: var(--bg-tertiary); padding: 8px; border-radius: 4px;">${personNames}</p>
+                <button class="btn-secondary" onclick="deleteOrphanedPresences('${evtId}')" style="margin-top: 10px; font-size: 0.8em; width: 100%;">🗑️ Limpar estas presenças (Irreversível)</button>
+            </div>
+        `;
+    }
+    html += '</div>';
+    showModal(html);
+}
+
+async function deleteOrphanedPresences(eventoId) {
+    if (!confirm('Tem certeza? Isso removerá permanentemente o histórico de presença dessas pessoas para este evento excluído.')) return;
+    
+    // Como não temos os IDs das presenças aqui (apenas no globalPresencas), precisamos buscar para deletar
+    try {
+        const snapshot = await db.collection('presencas')
+            .where('groupId', '==', currentGroupId)
+            .where('eventoId', '==', eventoId)
+            .get();
+            
+        const batch = db.batch();
+        snapshot.docs.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+        
+        showToast('Presenças limpas com sucesso.', 'success');
+        closeModal();
+        await loadDashboard(); // Recarregar para atualizar globalPresencas
+    } catch (error) {
+        showToast('Erro ao limpar: ' + error.message, 'error');
     }
 }
 
