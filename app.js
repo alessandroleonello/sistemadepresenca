@@ -311,9 +311,15 @@ async function loadUserData() {
         if(document.getElementById('userType')) document.getElementById('userType').textContent = userData.role === 'superadmin' ? 'Super Admin' : 'Coordenador';
         
         // Mostrar seção de coordenadores pendentes se for superadmin
-        if (userData.role === 'superadmin' && document.getElementById('pendingCoordinators')) {
-            document.getElementById('pendingCoordinators').style.display = 'block';
-            loadPendingCoordinators();
+        if (userData.role === 'superadmin') {
+            if (document.getElementById('pendingCoordinators')) {
+                document.getElementById('pendingCoordinators').style.display = 'block';
+                loadPendingCoordinators();
+            }
+            if (document.getElementById('activeCoordinators')) {
+                document.getElementById('activeCoordinators').style.display = 'block';
+                loadActiveCoordinators();
+            }
         }
         
         ministerios = groupData.ministerios || [];
@@ -1575,7 +1581,7 @@ async function loadPessoas(resetPage = true, animate = false) {
     const end = start + itemsPerPage;
     const paginatedList = filtered.slice(start, end);
     
-    renderPessoasTable(paginatedList, totalPages, animate);
+    renderPessoasTable(paginatedList, filtered, totalPages, animate);
 }
 
 function toggleCoordinatorFilter() {
@@ -1726,7 +1732,7 @@ function getCoordinatorRoles(personId) {
     return roles;
 }
 
-function renderPessoasTable(pessoasList, totalPages = 1, animate = false) {
+function renderPessoasTable(pessoasList, allFilteredPessoas, totalPages = 1, animate = false) {
     const container = document.getElementById('pessoasTable');
     
     const search = document.getElementById('searchPessoa')?.value;
@@ -1743,16 +1749,17 @@ function renderPessoasTable(pessoasList, totalPages = 1, animate = false) {
     }
     
     // Calcular resumo
-    const total = pessoasList.length;
-    const servos = pessoasList.filter(p => p.tipo === 'servo').length;
-    const participantes = pessoasList.filter(p => p.tipo === 'participante').length;
+    const totalVisible = pessoasList.length;
+    const totalFiltered = allFilteredPessoas.length;
+    const servos = allFilteredPessoas.filter(p => p.tipo === 'servo').length;
+    const participantes = allFilteredPessoas.filter(p => p.tipo === 'participante').length;
     const isCardView = currentPessoaView === 'cards';
     const animationClass = animate ? 'fade-in' : '';
 
     let html = `
         <div style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
             <div style="font-size: 0.9em; color: var(--text-secondary); background: var(--bg-tertiary); padding: 8px 12px; border-radius: 8px;">
-                <strong>${total}</strong> pessoas encontradas 
+                <strong>Mostrando ${totalVisible} de ${totalFiltered}</strong> pessoas encontradas 
                 <span style="margin: 0 5px; color: var(--border);">|</span> 
                 <strong>${servos}</strong> Servos, <strong>${participantes}</strong> Participantes
             </div>
@@ -5670,6 +5677,69 @@ function copyGroupCode() {
     showToast('Código copiado!', 'success');
 }
 
+async function handleSwitchGroup() {
+    const codeInput = document.getElementById('switchGroupCode');
+    const code = codeInput.value.trim().toUpperCase();
+
+    if (!code) {
+        showToast('Digite o código do grupo.', 'warning');
+        return;
+    }
+
+    if (confirm('Deseja trocar para o grupo com este código? Sua visualização atual será alterada.')) {
+        try {
+            const groupsQuery = await db.collection('groups').where('code', '==', code).get();
+
+            if (groupsQuery.empty) {
+                showToast('Grupo não encontrado.', 'error');
+                return;
+            }
+
+            const groupDoc = groupsQuery.docs[0];
+            const groupData = groupDoc.data();
+            const newGroupId = groupDoc.id;
+
+            if (newGroupId === currentGroupId) {
+                showToast('Você já está neste grupo.', 'info');
+                return;
+            }
+
+            // Determinar papel baseado na propriedade (se é dono, vira superadmin automaticamente)
+            let role = 'coordenador';
+            let pending = true;
+
+            if (groupData.ownerId === currentUser.uid) {
+                role = 'superadmin';
+                pending = false;
+            }
+
+            // Atualizar usuário
+            await db.collection('users').doc(currentUser.uid).update({
+                groupId: newGroupId,
+                role: role,
+                pending: pending
+            });
+
+            codeInput.value = '';
+            showToast('Trocando de grupo...', 'success');
+            
+            // Recarregar dados
+            const userData = await loadUserData();
+            
+            if (userData && userData.pending) {
+                showScreen('pending');
+            } else {
+                showScreen('main');
+                loadDashboard();
+            }
+
+        } catch (error) {
+            console.error(error);
+            showToast('Erro ao trocar de grupo: ' + error.message, 'error');
+        }
+    }
+}
+
 async function loadPendingCoordinators() {
     const usersSnapshot = await db.collection('users')
         .where('groupId', '==', currentGroupId)
@@ -5723,6 +5793,50 @@ async function rejectCoordinator(userId) {
                 showToast('Permissão negada. Atualize as Regras de Segurança no Firebase Console.', 'error');
             } else {
                 showToast('Erro ao rejeitar: ' + error.message, 'error');
+            }
+        }
+    }
+}
+
+async function loadActiveCoordinators() {
+    const usersSnapshot = await db.collection('users')
+        .where('groupId', '==', currentGroupId)
+        .where('role', '==', 'coordenador')
+        .where('pending', '==', false)
+        .get();
+    
+    const active = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    
+    const container = document.getElementById('activeList');
+    
+    if (active.length === 0) {
+        container.innerHTML = '<p class="help-text">Nenhum coordenador ativo.</p>';
+        return;
+    }
+    
+    container.innerHTML = active.map(user => `
+        <div class="card" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding: 1rem;">
+            <div>
+                <p style="margin-bottom: 5px;"><strong>${user.email}</strong></p>
+                <p class="help-text" style="margin: 0;">Entrou em: ${user.createdAt ? formatDate(user.createdAt.toDate()) : 'Data desconhecida'}</p>
+            </div>
+            <button class="btn-danger" onclick="removeCoordinator('${user.id}')" style="padding: 5px 10px; font-size: 0.9em;">Remover</button>
+        </div>
+    `).join('');
+}
+
+async function removeCoordinator(userId) {
+    if (confirm('Tem certeza que deseja remover o acesso deste coordenador?')) {
+        try {
+            await db.collection('users').doc(userId).delete();
+            logActivity('Remover Coordenador', `ID Usuário: ${userId}`, 'sistema');
+            loadActiveCoordinators();
+            showToast('Coordenador removido com sucesso.', 'success');
+        } catch (error) {
+            if (error.code === 'permission-denied') {
+                showToast('Permissão negada.', 'error');
+            } else {
+                showToast('Erro ao remover: ' + error.message, 'error');
             }
         }
     }
