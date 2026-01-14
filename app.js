@@ -749,7 +749,7 @@ function loadMinisteriosChart() {
     ministerios.forEach(m => counts[m] = 0);
     
     pessoas.forEach(p => {
-        if (p.tipo === 'servo' && p.ministerios) {
+        if (p.ministerios) {
             p.ministerios.forEach(m => {
                 if (counts[m] !== undefined) counts[m]++;
             });
@@ -1404,7 +1404,7 @@ async function loadMinisteriosDestaque() {
 
         const minStats = ministerios.map(minName => {
             // Servos deste ministério
-            const servosDoMinisterio = pessoas.filter(p => p.tipo === 'servo' && p.ministerios && p.ministerios.includes(minName));
+            const servosDoMinisterio = pessoas.filter(p => p.ministerios && p.ministerios.includes(minName));
             
             if (servosDoMinisterio.length === 0) return null;
 
@@ -1529,7 +1529,6 @@ function getFilteredPessoas() {
     // Filtrar por ministério
     if (currentMinisterioFilters.size > 0) {
         filtered = filtered.filter(p => 
-            p.tipo === 'servo' && 
             p.ministerios && 
             [...currentMinisterioFilters].every(m => p.ministerios.includes(m))
         );
@@ -1793,13 +1792,13 @@ function renderPessoasTable(pessoasList, totalPages = 1, animate = false) {
                             <td><span class="badge badge-${pessoa.tipo === 'servo' ? 'primary' : 'success'}" style="cursor: pointer; ${currentTipoFilter === pessoa.tipo ? 'border: 2px solid currentColor;' : ''}" onclick="event.stopPropagation(); filterByTipo('${pessoa.tipo}')" title="${currentTipoFilter === pessoa.tipo ? 'Remover filtro' : 'Filtrar por ' + pessoa.tipo}">${pessoa.tipo}</span></td>
                             <td>
                                 <div style="display: flex; flex-wrap: wrap; gap: 3px; max-width: 250px;">
-                                    ${pessoa.tipo === 'servo' ? (pessoa.ministerios ? pessoa.ministerios.map(m => {
+                                    ${(pessoa.ministerios && pessoa.ministerios.length > 0) ? pessoa.ministerios.map(m => {
                                         const style = getMinisterioStyle(m);
                                         const className = style ? 'ministerio-tag' : `ministerio-tag ${getMinisterioColorClass(m)}`;
                                         const isSelected = currentMinisterioFilters.has(m);
                                         const activeStyle = isSelected ? 'border: 2px solid currentColor;' : '';
                                         return `<span onclick="event.stopPropagation(); filterByMinisterio('${m}')" class="${className}" style="${style} ${activeStyle}" title="${isSelected ? 'Remover filtro' : 'Filtrar por ' + m}">${escapeHtml(m)}</span>`;
-                                    }).join('') : '') : '<span style="color: var(--text-tertiary); font-size: 0.8em; font-style: italic;">Participantes não possuem ministérios</span>'}
+                                    }).join('') : '<span style="color: var(--text-tertiary); font-size: 0.8em; font-style: italic;">Sem ministérios</span>'}
                                 </div>
                             </td>
                             <td>
@@ -1856,7 +1855,7 @@ function renderPessoasTable(pessoasList, totalPages = 1, animate = false) {
                     <div style="margin-bottom: 10px; padding-left: ${selectionMode ? '30px' : '0'};">
                         ${pessoa.telefone ? `<p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 5px;">📞 ${pessoa.telefone}</p>` : ''}
                         
-                        ${pessoa.tipo === 'servo' ? (pessoa.ministerios ? `
+                        ${(pessoa.ministerios && pessoa.ministerios.length > 0) ? `
                             <div style="display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px;">
                                 ${pessoa.ministerios.map(m => {
                                     const style = getMinisterioStyle(m);
@@ -1864,7 +1863,7 @@ function renderPessoasTable(pessoasList, totalPages = 1, animate = false) {
                                     return `<span onclick="event.stopPropagation(); filterByMinisterio('${m}')" class="${className}" style="${style}">${m}</span>`;
                                 }).join('')}
                             </div>
-                        ` : '') : '<div style="color: var(--text-tertiary); font-size: 0.8em; font-style: italic; margin-top: 8px;">Participantes não possuem ministérios</div>'}
+                        ` : '<div style="color: var(--text-tertiary); font-size: 0.8em; font-style: italic; margin-top: 8px;">Sem ministérios</div>'}
                     </div>
 
                     <div style="display: flex; gap: 5px; border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px;">
@@ -1948,13 +1947,13 @@ function showPessoaForm(pessoaId = null) {
             
             <div class="form-group">
                 <label>Tipo de Participante</label>
-                <select id="pessoaTipo" class="input-field" onchange="toggleMinisterios()">
+                <select id="pessoaTipo" class="input-field">
                     <option value="participante" ${pessoa?.tipo === 'participante' ? 'selected' : ''}>Participante</option>
                     <option value="servo" ${pessoa?.tipo === 'servo' ? 'selected' : ''}>Servo</option>
                 </select>
             </div>
             
-            <div class="form-group" id="ministeriosGroup" style="display: ${pessoa?.tipo === 'servo' ? 'block' : 'none'}">
+            <div class="form-group" id="ministeriosGroup">
                 <label>Ministérios</label>
                 <div class="checkbox-group" id="ministeriosCheckboxes">
                     ${ministerios.map(m => `
@@ -1979,11 +1978,6 @@ function showPessoaForm(pessoaId = null) {
     };
 }
 
-function toggleMinisterios() {
-    const tipo = document.getElementById('pessoaTipo').value;
-    document.getElementById('ministeriosGroup').style.display = tipo === 'servo' ? 'block' : 'none';
-}
-
 async function savePessoa(pessoaId) {
     const nome = document.getElementById('pessoaNome').value;
     const dataNascimento = document.getElementById('pessoaDataNasc').value;
@@ -1994,14 +1988,12 @@ async function savePessoa(pessoaId) {
     const tipo = document.getElementById('pessoaTipo').value;
     
     let ministeriosSelecionados = [];
-    if (tipo === 'servo') {
-        ministerios.forEach(m => {
-            const checkbox = document.getElementById(`min_${m}`);
-            if (checkbox && checkbox.checked) {
-                ministeriosSelecionados.push(m);
-            }
-        });
-    }
+    ministerios.forEach(m => {
+        const checkbox = document.getElementById(`min_${m}`);
+        if (checkbox && checkbox.checked) {
+            ministeriosSelecionados.push(m);
+        }
+    });
     
     const pessoaData = {
         nome,
@@ -2752,7 +2744,7 @@ async function showPessoaDetails(pessoaId) {
                 ` : ''}
             </div>
 
-            ${pessoa.tipo === 'servo' && pessoa.ministerios ? `
+            ${pessoa.ministerios && pessoa.ministerios.length > 0 ? `
             <div style="margin-bottom: 1.5rem;">
                 <h3 style="font-size: 1.1rem; margin-bottom: 0.8rem;">Ministérios</h3>
                 <div style="display: flex; flex-wrap: wrap; gap: 8px;">
@@ -3114,10 +3106,13 @@ async function deleteJustificativaFromHistory(justificativaId, pessoaId) {
 function checkEligibility(pessoa, evento) {
     if (evento.destinatarios === 'todos') return true;
     
-    if (pessoa.tipo === 'servo' && evento.destinatarios === 'servos') {
-        // Verificar se o evento é do ministério da pessoa
-        if (!evento.ministerios || evento.ministerios.length === 0) return true;
-        return pessoa.ministerios?.some(m => evento.ministerios.includes(m));
+    if (evento.destinatarios === 'servos') {
+        // Se o evento é para ministérios específicos, qualquer um com o ministério é elegível
+        if (evento.ministerios && evento.ministerios.length > 0) {
+            return pessoa.ministerios?.some(m => evento.ministerios.includes(m));
+        }
+        // Se é para todos os servos, mantém restrição de tipo
+        return pessoa.tipo === 'servo';
     }
     
     return false;
