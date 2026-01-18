@@ -92,8 +92,8 @@ service cloud.firestore {
       allow list: if isAuthenticated();
     }
     match /{collection}/{document=**} {
-      allow read, update, delete: if (collection == 'pessoas' || collection == 'eventos' || collection == 'presencas' || collection == 'justificativas' || collection == 'activity_logs' || collection == 'archived_activity_logs') && isUserInGroup();
-      allow create: if (collection == 'pessoas' || collection == 'eventos' || collection == 'presencas' || collection == 'justificativas' || collection == 'activity_logs' || collection == 'archived_activity_logs') && isCreatingInOwnGroup();
+      allow read, update, delete: if (collection == 'pessoas' || collection == 'eventos' || collection == 'presencas' || collection == 'justificativas' || collection == 'activity_logs' || collection == 'archived_activity_logs' || collection == 'retiros' || collection == 'retiro_participantes') && isUserInGroup();
+      allow create: if (collection == 'pessoas' || collection == 'eventos' || collection == 'presencas' || collection == 'justificativas' || collection == 'activity_logs' || collection == 'archived_activity_logs' || collection == 'retiros' || collection == 'retiro_participantes') && isCreatingInOwnGroup();
     }
   }
 }

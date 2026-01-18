@@ -81,6 +81,10 @@
                     <span class="nav-icon">📅</span>
                     <span>Eventos</span>
                 </a>
+                <a href="#" onclick="showSection('retiros')" class="nav-item" data-section="retiros">
+                    <span class="nav-icon">⛺</span>
+                    <span>Retiros</span>
+                </a>
                 <a href="#" onclick="showSection('checkin')" class="nav-item" data-section="checkin">
                     <span class="nav-icon">✓</span>
                     <span>Check-in</span>
@@ -289,6 +293,7 @@
                 <div class="section-header">
                     <h1>Pessoas</h1>
                     <div style="display: flex; gap: 10px;">
+                        <button onclick="initSorteioGeral()" class="btn-secondary" title="Sortear entre todos">🎲 Sortear</button>
                         <button onclick="exportPessoasCSV()" class="btn-secondary" title="Exportar para Excel/CSV">📥 Exportar</button>
                         <button onclick="showPessoaForm()" class="btn-primary">+ Nova Pessoa</button>
                     </div>
@@ -316,6 +321,8 @@
                             <option value="10">10 por página</option>
                             <option value="20">20 por página</option>
                             <option value="50">50 por página</option>
+                            <option value="100">100 por página</option>
+                            <option value="all">Todos</option>
                         </select>
                         <button onclick="toggleCoordinatorFilter()" id="btnCoordinatorFilter" class="btn-secondary" title="Filtrar Coordenadores">👤 Coordenadores</button>
                         <button onclick="toggleSelectionMode()" class="btn-secondary" id="btnSelecionar">Modo Seleção</button>
@@ -338,12 +345,24 @@
 
                 <!-- Relatório de Frequência -->
                 <div id="pessoaRelatorio" class="tab-content">
-                    <div class="filters" style="margin-bottom: 1rem;">
-                        <select id="filterRelatorioOrdem" class="input-field" onchange="loadRelatorioFrequencia()">
-                            <option value="maior_freq">Maior Frequência</option>
-                            <option value="menor_freq">Menor Frequência</option>
-                            <option value="com_justificativa">Com Justificativas</option>
-                        </select>
+                    <div class="filters" style="margin-bottom: 1rem; align-items: flex-end;">
+                        <div style="flex: 1; min-width: 130px;">
+                            <label style="font-size: 0.85em; color: var(--text-secondary); display: block; margin-bottom: 4px;">De:</label>
+                            <input type="date" id="relatorioInicio" class="input-field" onchange="loadRelatorioFrequencia()">
+                        </div>
+                        <div style="flex: 1; min-width: 130px;">
+                            <label style="font-size: 0.85em; color: var(--text-secondary); display: block; margin-bottom: 4px;">Até:</label>
+                            <input type="date" id="relatorioFim" class="input-field" onchange="loadRelatorioFrequencia()">
+                        </div>
+                        <div style="flex: 1; min-width: 180px;">
+                            <label style="font-size: 0.85em; color: var(--text-secondary); display: block; margin-bottom: 4px;">Ordenar por:</label>
+                            <select id="filterRelatorioOrdem" class="input-field" onchange="loadRelatorioFrequencia()">
+                                <option value="maior_freq">Maior Frequência</option>
+                                <option value="menor_freq">Menor Frequência</option>
+                                <option value="com_justificativa">Com Justificativas</option>
+                            </select>
+                        </div>
+                        <button class="btn-secondary" onclick="clearRelatorioFilters()" style="height: 46px;" title="Limpar Filtros">Limpar</button>
                     </div>
                     <div class="relatorio-container" id="relatorioFrequencia">
                         <!-- Relatório carregado dinamicamente -->
@@ -352,7 +371,11 @@
 
                 <!-- Aba Aniversários -->
                 <div id="pessoaAniversarios" class="tab-content">
-                    <div style="display: flex; justify-content: flex-end; margin-bottom: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <div style="display: flex; gap: 5px;">
+                            <button class="btn-icon active" id="btnAnivViewCards" onclick="setAniversarioView('cards')" title="Visualização em Cards">📅</button>
+                            <button class="btn-icon" id="btnAnivViewList" onclick="setAniversarioView('list')" title="Visualização em Lista">☰</button>
+                        </div>
                         <button onclick="exportAniversariantesPDF()" class="btn-secondary" title="Exportar PDF">📄 Exportar Lista Anual</button>
                     </div>
                     <div id="aniversariosList" class="aniversarios-grid">
@@ -467,6 +490,49 @@
                         <!-- Formulário inline -->
                     </div>
                 </div>
+            </section>
+
+            <!-- Retiros -->
+            <section id="retiros" class="content-section">
+                <div class="section-header">
+                    <h1>Retiros</h1>
+                    <button onclick="showRetiroForm()" class="btn-primary">+ Novo Retiro</button>
+                </div>
+                
+                <div class="tabs">
+                    <button class="tab active" onclick="showRetiroTab('lista')">Lista de Retiros</button>
+                    <button class="tab" onclick="showRetiroTab('filtro')">Filtrar Participantes</button>
+                </div>
+
+                <div id="retiroLista" class="tab-content active">
+                    <div id="retirosList" class="eventos-grid">
+                        <!-- Retiros carregados dinamicamente -->
+                    </div>
+                </div>
+
+                <div id="retiroFiltro" class="tab-content">
+                    <div class="filters">
+                        <select id="filterRetiroSelect" class="input-field" onchange="filterRetiroParticipants()">
+                            <option value="">Selecione uma opção...</option>
+                            <option value="none">🚫 Pessoas que nunca fizeram retiro</option>
+                        </select>
+                    </div>
+                    <div id="retiroFilterResults" class="table-container">
+                        <p class="help-text">Selecione uma opção acima para ver os resultados.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Gestão de Retiro (Detalhes) -->
+            <section id="retiro-gestao" class="content-section">
+                <div class="section-header">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <button class="btn-icon" onclick="showSection('retiros')" title="Voltar">⬅️</button>
+                        <h1 id="gestaoRetiroTitle">Gestão do Retiro</h1>
+                    </div>
+                    <button onclick="showRetiroExportOptions()" class="btn-secondary" title="Exportar Relatório">📥 Exportar</button>
+                </div>
+                <div id="gestaoRetiroContent"></div>
             </section>
 
             <!-- Check-in -->

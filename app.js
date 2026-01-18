@@ -13,9 +13,11 @@ let ministerioColors = {};
 let currentEventoView = 'cards';
 let currentTipoFilter = '';
 let currentMinisterioFilters = new Set();
+let currentRetiroFilters = new Set();
 let ministerioCoordinators = {};
 let currentMinisterioView = localStorage.getItem('ministerioView') || 'cards';
 let currentPessoaView = localStorage.getItem('pessoaView') || 'list';
+let currentAniversarioView = localStorage.getItem('aniversarioView') || 'cards';
 let eventoSelectionMode = false;
 let selectedEventos = new Set();
 let eventTypes = [];
@@ -27,6 +29,10 @@ let customLowFreqMessage = '';
 let currentLogs = [];
 let isFullHistoryLoaded = false; // Controle para saber se carregamos tudo ou só recente
 let userPending = false; // Controle global de status pendente
+let globalPersonRetirosMap = {}; // Mapa de retiros visíveis por pessoa
+let currentRetiroId = null; // ID do retiro sendo gerenciado atualmente
+let currentRetiroTab = 'participantes'; // Aba atual da gestão de retiro
+let currentTeamRoleFilter = ''; // Filtro de função da equipe
 
 const TAG_PALETTE = [
     '#e0f2fe', // Sky
@@ -59,6 +65,16 @@ function escapeHtml(text) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
+}
+
+// Função Debounce para otimizar buscas
+function debounce(func, wait) {
+    let timeout;
+    return function(...args) {
+        const context = this;
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(context, args), wait);
+    };
 }
 
 // ==================== AUTENTICAÇÃO ====================
@@ -380,9 +396,13 @@ function showSection(sectionName) {
             break;
         case 'pessoas':
             loadPessoas();
+            updateVisibleRetirosMap().then(() => loadPessoas(false));
             break;
         case 'eventos':
             loadEventos();
+            break;
+        case 'retiros':
+            loadRetiros();
             break;
         case 'checkin':
             loadCheckinEventos();
@@ -562,6 +582,9 @@ async function loadDashboard() {
     // Carregar Top 3 Resumo
     loadTop3Summary();
 
+    // Carregar mapa de retiros visíveis
+    await updateVisibleRetirosMap();
+
     } catch (error) {
         console.error("Erro ao carregar dashboard:", error);
         if (error.code === 'permission-denied') {
@@ -683,13 +706,13 @@ function loadProximosEventos() {
         <div class="card" style="${cardStyle}">
             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 5px;">
                 <div style="flex: 1; margin-right: 10px;">
-                    <h4 style="margin: 0; display: inline; margin-right: 5px;">${evento.nome}</h4>
-                    ${evento.tipo ? `<span style="font-size: 0.75em; color: var(--text-secondary); background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; vertical-align: middle; white-space: nowrap;">${evento.tipo}</span>` : ''}
+                    <h4 style="margin: 0; display: inline; margin-right: 5px;">${escapeHtml(evento.nome)}</h4>
+                    ${evento.tipo ? `<span style="font-size: 0.75em; color: var(--text-secondary); background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; vertical-align: middle; white-space: nowrap;">${escapeHtml(evento.tipo)}</span>` : ''}
                 </div>
                 ${timeBadge}
             </div>
-            <p style="margin-bottom: 5px;">${formatDate(evento.data)} às ${evento.horario}</p>
-            <p class="help-text" style="margin: 0;">${evento.local}</p>
+            <p style="margin-bottom: 5px;">${formatDate(evento.data)} às ${escapeHtml(evento.horario)}</p>
+            <p class="help-text" style="margin: 0;">${escapeHtml(evento.local)}</p>
             ${checkinButton}
         </div>
     `}).join('');
@@ -727,8 +750,8 @@ function loadAttendanceChart() {
                         <div style="font-weight: bold; margin-bottom: 5px; font-size: 0.85em; color: #555;">${percent}%</div>
                         <div style="width: 100%; background-color: ${color}; height: ${height}%; border-radius: 4px 4px 0 0; transition: height 0.3s ease; min-height: 4px;"></div>
                         <div style="margin-top: 10px; font-size: 0.75em; text-align: center; color: #666; line-height: 1.2;">
-                            <div style="font-weight: 500; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;" title="${e.nome}">
-                                ${e.nome.length > 10 ? e.nome.substring(0, 10) + '...' : e.nome}
+                            <div style="font-weight: 500; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;" title="${escapeHtml(e.nome)}">
+                                ${escapeHtml(e.nome).length > 10 ? escapeHtml(e.nome).substring(0, 10) + '...' : escapeHtml(e.nome)}
                             </div>
                             <div>${formatDate(e.data).substring(0, 5)}</div>
                         </div>
@@ -788,9 +811,9 @@ function loadMinisteriosChart() {
 
         const safeName = item.name.replace(/'/g, "\\'");
         return `
-        <div style="margin-bottom: 12px; cursor: pointer;" onclick="navigateToMinisterioFilter('${safeName}')" title="Filtrar por ${item.name}">
+        <div style="margin-bottom: 12px; cursor: pointer;" onclick="navigateToMinisterioFilter('${safeName}')" title="Filtrar por ${escapeHtml(item.name)}">
             <div class="ministry-row-header">
-                <span>${item.name}</span>
+                <span>${escapeHtml(item.name)}</span>
                 <span style="font-weight: 600; color: var(--text-primary);">${item.count}</span>
             </div>
             <div style="width: 100%; background: var(--bg-tertiary); height: 8px; border-radius: 4px; overflow: hidden;">
@@ -911,7 +934,7 @@ function loadTop3Summary() {
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 0.9em; border-bottom: 1px solid var(--border); padding-bottom: 4px;">
                     <div style="display: flex; align-items: center; gap: 5px; overflow: hidden;">
                         <span>${medal}</span>
-                        <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;" ${item.id ? `onclick="showPessoaDetails('${item.id}')"` : ''}>${item.nome}</span>
+                        <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;" ${item.id ? `onclick="showPessoaDetails('${item.id}')"` : ''}>${escapeHtml(item.nome)}</span>
                     </div>
                     <span class="badge badge-success" style="font-size: 0.75em; padding: 1px 6px;">${item.porcentagem.toFixed(0)}%</span>
                 </div>
@@ -1021,7 +1044,7 @@ function loadAniversariantes() {
         return `
             <div class="card flex-card" style="margin-bottom: 10px; padding: 10px; ${cardStyle}">
                 <div>
-                    <h4 style="margin: 0;">${p.nome} ${isHoje ? '🎂' : ''}</h4>
+                    <h4 style="margin: 0;">${escapeHtml(p.nome)} ${isHoje ? '🎂' : ''}</h4>
                     <p class="help-text" style="margin: 0;">${statusText}</p>
                     ${actionsHtml}
                 </div>
@@ -1051,25 +1074,32 @@ function sendBirthdayMessage(id, nome, telefone, dateKey) {
     logActivity('Envio Mensagem', `Aniversário para ${nome}`, 'mensagens');
     
     // Marca como enviado automaticamente
-    const checkbox = document.getElementById(`check_${id}`);
-    if (checkbox) {
-        checkbox.checked = true;
-        toggleBirthdayMessage(id, dateKey);
+    const storageKey = `birthday_sent_${id}_${dateKey}`;
+    localStorage.setItem(storageKey, 'true');
+    
+    // Atualizar visualizações
+    loadAniversariantes();
+    if (document.getElementById('pessoaAniversarios').classList.contains('active')) {
+        loadAniversariosTab();
     }
 }
 
-function toggleBirthdayMessage(id, dateKey) {
-    const checkbox = document.getElementById(`check_${id}`);
+function toggleBirthdayMessage(id, dateKey, checkboxId = null) {
+    const elId = checkboxId || `check_${id}`;
+    const checkbox = document.getElementById(elId);
     const storageKey = `birthday_sent_${id}_${dateKey}`;
     
-    if (checkbox.checked) {
+    if (checkbox && checkbox.checked) {
         localStorage.setItem(storageKey, 'true');
     } else {
         localStorage.removeItem(storageKey);
     }
     
-    // Recarregar para atualizar o visual (remover destaque vermelho se marcado)
+    // Recarregar para atualizar o visual
     loadAniversariantes();
+    if (document.getElementById('pessoaAniversarios').classList.contains('active')) {
+        loadAniversariosTab();
+    }
 }
 
 function loadPessoasBaixaFrequencia() {
@@ -1088,7 +1118,7 @@ function loadPessoasBaixaFrequencia() {
     container.innerHTML = baixaFreq.map(pessoa => `
         <div class="card flex-card">
             <div>
-                <h4 style="margin: 0;">${pessoa.nome}</h4>
+                <h4 style="margin: 0;">${escapeHtml(pessoa.nome)}</h4>
                 <p class="help-text" style="margin: 0;">Frequência: ${(pessoa.frequencia || 0).toFixed(1)}%</p>
             </div>
             <button class="btn-icon" onclick="sendLowFrequencyMessage('${pessoa.nome}', '${pessoa.telefone}')" title="Enviar Mensagem" style="color: #25D366;">📱</button>
@@ -1227,8 +1257,8 @@ async function loadServosDestaque() {
             return `
             <div class="card flex-card" style="margin-bottom: 10px; padding: 10px; ${rankStyle} cursor: pointer;" onclick="showPessoaDetails('${s.id}')" title="Ver histórico de ${s.nome}">
                 <div>
-                    <h4 style="margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${medal}#${index + 1} ${s.nome}</h4>
-                    <p class="help-text" style="margin: 0; white-space: normal;">${s.ministerios.join(', ')}</p>
+                    <h4 style="margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${medal}#${index + 1} ${escapeHtml(s.nome)}</h4>
+                    <p class="help-text" style="margin: 0; white-space: normal;">${s.ministerios.map(escapeHtml).join(', ')}</p>
                 </div>
                 <div class="text-right-desktop">
                     <span class="badge badge-success" style="font-size: 1.1em;">${s.porcentagem.toFixed(0)}%</span>
@@ -1348,7 +1378,7 @@ async function loadParticipantesDestaque() {
             return `
             <div class="card flex-card" style="margin-bottom: 10px; padding: 10px; ${rankStyle} cursor: pointer;" onclick="showPessoaDetails('${s.id}')" title="Ver histórico de ${s.nome}">
                 <div>
-                    <h4 style="margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${medal}#${index + 1} ${s.nome}</h4>
+                    <h4 style="margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${medal}#${index + 1} ${escapeHtml(s.nome)}</h4>
                 </div>
                 <div class="text-right-desktop">
                     <span class="badge badge-success" style="font-size: 1.1em;">${s.porcentagem.toFixed(0)}%</span>
@@ -1487,7 +1517,7 @@ async function loadMinisteriosDestaque() {
                     <div>
                         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
                             <h4 style="margin: 0;">${medal}#${index + 1}</h4>
-                            <span class="${className}" style="${style}; font-size: 0.9rem;">${s.nome}</span>
+                            <span class="${className}" style="${style}; font-size: 0.9rem;">${escapeHtml(s.nome)}</span>
                         </div>
                         <p class="help-text" style="margin: 0;">${s.servosCount} servos</p>
                     </div>
@@ -1498,7 +1528,7 @@ async function loadMinisteriosDestaque() {
                 </div>
                 ${s.topServo ? `
                 <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 0.85rem; color: var(--text-secondary); cursor: pointer;" onclick="showPessoaDetails('${s.topServo.id}')" title="Ver histórico de ${s.topServo.nome}">
-                    ⭐ <strong>Destaque:</strong> ${s.topServo.nome} (${s.topServo.presencas} presenças)
+                    ⭐ <strong>Destaque:</strong> ${escapeHtml(s.topServo.nome)} (${s.topServo.presencas} presenças)
                 </div>
                 ` : ''}
             </div>
@@ -1551,6 +1581,16 @@ function getFilteredPessoas() {
         filtered = filtered.filter(p => coordinatorIds.has(p.id));
     }
 
+    // Filtrar por retiros
+    if (currentRetiroFilters.size > 0) {
+        filtered = filtered.filter(p => {
+            const pRetiros = globalPersonRetirosMap[p.id] || [];
+            return [...currentRetiroFilters].every(filterName => {
+                return pRetiros.some(r => r.name === filterName && !r.isTeam);
+            });
+        });
+    }
+
     // Ordenar
     if (ordem === 'nome') {
         filtered.sort((a, b) => a.nome.localeCompare(b.nome));
@@ -1570,7 +1610,8 @@ async function loadPessoas(resetPage = true, animate = false) {
 
     const itemsPerPageInput = document.getElementById('itemsPerPage');
     if (itemsPerPageInput) {
-        itemsPerPage = parseInt(itemsPerPageInput.value);
+        const val = itemsPerPageInput.value;
+        itemsPerPage = val === 'all' ? 999999 : parseInt(val);
     }
 
     const filtered = getFilteredPessoas();
@@ -1652,6 +1693,17 @@ function filterByMinisterio(ministerio) {
     loadPessoas();
 }
 
+function filterByRetiro(retiro) {
+    if (currentRetiroFilters.has(retiro)) {
+        currentRetiroFilters.delete(retiro);
+        showToast(`Filtro removido: ${retiro}`, 'info');
+    } else {
+        currentRetiroFilters.add(retiro);
+        showToast(`Filtrando por: ${retiro}`, 'info');
+    }
+    loadPessoas();
+}
+
 function handleMinisterioSelect(value) {
     currentMinisterioFilters.clear();
     if (value) {
@@ -1703,6 +1755,7 @@ function clearPessoasFilters() {
     if (ordem) ordem.value = 'nome';
     currentTipoFilter = '';
     currentMinisterioFilters.clear();
+    currentRetiroFilters.clear();
 
     if (showCoordinatorsOnly) {
         showCoordinatorsOnly = false;
@@ -1732,12 +1785,29 @@ function getCoordinatorRoles(personId) {
     return roles;
 }
 
+function getRetiroTagsHtml(personId, showTeam = false) {
+    const retiros = globalPersonRetirosMap[personId];
+    if (!retiros || retiros.length === 0) return '';
+    
+    return retiros.map(r => {
+        if (r.isTeam && !showTeam) return ''; // Esconde equipe se não for solicitado
+
+        const isSelected = currentRetiroFilters.has(r.name);
+        const borderStyle = isSelected ? 'border: 2px solid #fbbf24;' : '';
+        const safeName = r.name.replace(/'/g, "\\'");
+        const bgColor = r.isTeam ? '#f97316' : '#8b5cf6'; // Laranja para equipe, Roxo para participante
+        const icon = r.isTeam ? '🛠️' : '⛺';
+        
+        return `<span class="badge" onclick="event.stopPropagation(); filterByRetiro('${safeName}')" style="background-color: ${bgColor}; color: white; font-size: 0.7em; margin-left: 4px; vertical-align: middle; cursor: pointer; ${borderStyle}" title="${isSelected ? 'Remover filtro' : 'Filtrar por ' + r.name} (${r.isTeam ? 'Equipe' : 'Participante'})">${icon} ${r.name}</span>`;
+    }).join('');
+}
+
 function renderPessoasTable(pessoasList, allFilteredPessoas, totalPages = 1, animate = false) {
     const container = document.getElementById('pessoasTable');
     
     const search = document.getElementById('searchPessoa')?.value;
     const ordem = document.getElementById('filterOrdem')?.value;
-    const hasFilters = search || currentMinisterioFilters.size > 0 || ordem || currentTipoFilter || showCoordinatorsOnly;
+    const hasFilters = search || currentMinisterioFilters.size > 0 || currentRetiroFilters.size > 0 || ordem || currentTipoFilter || showCoordinatorsOnly;
 
     if (pessoasList.length === 0) {
         let html = '<p class="help-text">Nenhuma pessoa encontrada</p>';
@@ -1790,9 +1860,14 @@ function renderPessoasTable(pessoasList, allFilteredPessoas, totalPages = 1, ani
                         return `
                         <tr class="${selectedItems.has(pessoa.id) ? 'selected' : ''} ${pessoa.tipo === 'servo' ? 'servo-row' : 'participante-row'}" onclick="showPessoaDetails('${pessoa.id}')">
                             ${selectionMode ? `<td><input type="checkbox" ${selectedItems.has(pessoa.id) ? 'checked' : ''} onchange="toggleSelect('${pessoa.id}')" onclick="event.stopPropagation()"></td>` : ''}
-                            <td style="display: flex; align-items: center;">
-                                <div class="avatar" style="background-color: ${getAvatarColor(pessoa.nome)}">${getInitials(pessoa.nome)}</div>
-                                ${escapeHtml(pessoa.nome)} ${coordinatorIcon}
+                            <td>
+                                <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 5px;">
+                                    <div style="display: flex; align-items: center;">
+                                        <div class="avatar" style="background-color: ${getAvatarColor(pessoa.nome)}">${getInitials(pessoa.nome)}</div>
+                                        ${escapeHtml(pessoa.nome)} ${coordinatorIcon}
+                                    </div>
+                                    ${getRetiroTagsHtml(pessoa.id)}
+                                </div>
                             </td>
                             <td>${calculateAge(pessoa.dataNascimento)} anos</td>
                             <td>${escapeHtml(pessoa.telefone)}</td>
@@ -1853,6 +1928,9 @@ function renderPessoasTable(pessoasList, allFilteredPessoas, totalPages = 1, ani
                             <div class="avatar" style="background-color: ${getAvatarColor(pessoa.nome)}">${getInitials(pessoa.nome)}</div>
                             <div>
                                 <h4 style="margin: 0;">${pessoa.nome} ${coordinatorIcon}</h4>
+                                <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px;">
+                                    ${getRetiroTagsHtml(pessoa.id)}
+                                </div>
                                 <p class="help-text" style="margin: 0;">${calculateAge(pessoa.dataNascimento)} anos</p>
                             </div>
                         </div>
@@ -1914,8 +1992,8 @@ function openPersonWhatsApp(nome, telefone) {
 }
 
 // Mostrar formulário de nova pessoa
-function showPessoaForm(pessoaId = null) {
-    const pessoa = pessoaId ? pessoas.find(p => p.id === pessoaId) : null;
+function showPessoaForm(pessoaId = null, prefillData = null) {
+    const pessoa = pessoaId ? pessoas.find(p => p.id === pessoaId) : (prefillData || null);
     
     const modalBody = `
         <h2>${pessoa ? 'Editar' : 'Nova'} Pessoa</h2>
@@ -1923,6 +2001,7 @@ function showPessoaForm(pessoaId = null) {
             <div class="form-group">
                 <label>Nome Completo *</label>
                 <input type="text" id="pessoaNome" class="input-field" value="${pessoa?.nome || ''}" required>
+                <div id="nameFeedback" style="font-size: 0.85em; margin-top: 4px; display: none;"></div>
             </div>
             
             <div class="form-row">
@@ -1978,14 +2057,46 @@ function showPessoaForm(pessoaId = null) {
     `;
     
     showModal(modalBody);
+
+    // Verificação de duplicidade em tempo real
+    document.getElementById('pessoaNome').addEventListener('input', function(e) {
+        const val = e.target.value.trim().toLowerCase();
+        const feedback = document.getElementById('nameFeedback');
+        
+        if (val.length > 2) {
+            // Verifica se existe alguém com nome similar (exceto a própria pessoa se for edição)
+            const duplicata = pessoas.find(p => p.nome.toLowerCase() === val && p.id !== pessoaId);
+            if (duplicata) {
+                feedback.style.display = 'block';
+                feedback.style.color = 'var(--warning)';
+                feedback.innerHTML = `⚠️ Atenção: Já existe uma pessoa chamada <strong>${duplicata.nome}</strong> (${duplicata.tipo}).`;
+            } else {
+                feedback.style.display = 'none';
+            }
+        } else {
+            feedback.style.display = 'none';
+        }
+    });
     
     document.getElementById('pessoaForm').onsubmit = async (e) => {
         e.preventDefault();
-        await savePessoa(pessoaId);
+        const savedId = await savePessoa(pessoaId);
+        if (savedId && prefillData && prefillData.onSave) {
+            await prefillData.onSave(savedId);
+        }
     };
 }
 
 async function savePessoa(pessoaId) {
+    const btnSubmit = document.querySelector('#pessoaForm button[type="submit"]');
+    let originalText = '';
+    if (btnSubmit) {
+        if (btnSubmit.disabled) return; // Previne múltiplos cliques
+        btnSubmit.disabled = true;
+        originalText = btnSubmit.textContent;
+        btnSubmit.textContent = 'Salvando...';
+    }
+
     const nome = document.getElementById('pessoaNome').value;
     const dataNascimento = document.getElementById('pessoaDataNasc').value;
     const telefone = document.getElementById('pessoaTelefone').value;
@@ -2044,17 +2155,28 @@ async function savePessoa(pessoaId) {
             
             const details = changes.length > 0 ? `Alterações em ${nome}:\n${changes.join('\n')}` : `Edição em ${nome} (sem alterações detectadas)`;
             logActivity('Editar Pessoa', details, 'pessoas');
+            
+            closeModal();
+            await loadDashboard();
+            loadPessoas();
+            return pessoaId;
         } else {
             pessoaData.createdAt = firebase.firestore.FieldValue.serverTimestamp();
-            await db.collection('pessoas').add(pessoaData);
+            const docRef = await db.collection('pessoas').add(pessoaData);
             logActivity('Criar Pessoa', `Nome: ${nome}`, 'pessoas');
+            
+            closeModal();
+            await loadDashboard();
+            loadPessoas();
+            return docRef.id;
         }
-        
-        closeModal();
-        await loadDashboard();
-        loadPessoas();
     } catch (error) {
         showToast('Erro ao salvar pessoa: ' + error.message, 'error');
+        if (btnSubmit) {
+            btnSubmit.disabled = false;
+            btnSubmit.textContent = originalText;
+        }
+        return null;
     }
 }
 
@@ -2684,7 +2806,7 @@ async function showPessoaDetails(pessoaId) {
             .orderBy('timestamp', 'desc')
             .get();
         
-        const presencas = presencasSnapshot.docs.map(doc => doc.data());
+        const presencas = presencasSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         
         const eventosPresenca = await Promise.all(
             presencas.map(async (p) => {
@@ -2692,18 +2814,19 @@ async function showPessoaDetails(pessoaId) {
                     const eventoDoc = await db.collection('eventos').doc(p.eventoId).get();
                     if (eventoDoc.exists) {
                         const data = eventoDoc.data();
-                        return { ...data, id: eventoDoc.id };
+                        return { ...data, id: eventoDoc.id, presencaId: p.id };
                     } else {
                         // Evento excluído - Retorna objeto placeholder para não quebrar a lista
                         return { 
                             id: p.eventoId, 
                             nome: 'Evento Excluído', 
                             data: null, 
-                            deleted: true 
+                            deleted: true,
+                            presencaId: p.id
                         };
                     }
                 } catch (e) {
-                    return { id: p.eventoId, nome: 'Erro ao carregar', data: null, deleted: true };
+                    return { id: p.eventoId, nome: 'Erro ao carregar', data: null, deleted: true, presencaId: p.id };
                 }
             })
         );
@@ -2717,7 +2840,10 @@ async function showPessoaDetails(pessoaId) {
                     <div class="avatar" style="width: 60px; height: 60px; font-size: 1.5rem; background-color: ${getAvatarColor(pessoa.nome)}">${getInitials(pessoa.nome)}</div>
                     <div>
                         <h2 style="margin: 0; font-size: 1.4rem;">${pessoa.nome}</h2>
-                        <span class="badge badge-${pessoa.tipo === 'servo' ? 'primary' : 'success'}">${pessoa.tipo === 'servo' ? 'Servo' : 'Participante'}</span>
+                        <div style="display: flex; gap: 5px; align-items: center; margin-top: 5px; flex-wrap: wrap;">
+                            <span class="badge badge-${pessoa.tipo === 'servo' ? 'primary' : 'success'}">${pessoa.tipo === 'servo' ? 'Servo' : 'Participante'}</span>
+                            ${getRetiroTagsHtml(pessoa.id, true)}
+                        </div>
                     </div>
                 </div>
                 <button class="btn-icon" onclick="editPessoa('${pessoa.id}')" title="Editar">✏️</button>
@@ -2775,10 +2901,13 @@ async function showPessoaDetails(pessoaId) {
                         validEventos.map(evento => `
                             <div style="padding: 10px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
                                 <div>
-                                    <div style="font-weight: 500;">${evento.nome}</div>
+                                    <div style="font-weight: 500;">${escapeHtml(evento.nome)}</div>
                                     <div style="font-size: 0.85rem; color: var(--text-secondary);">${evento.data ? formatDate(evento.data) : 'Data desconhecida'}</div>
                                 </div>
-                                <span class="badge badge-${evento.deleted ? 'danger' : 'success'}" style="font-size: 0.75rem;">${evento.deleted ? 'Excluído' : 'Presente'}</span>
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <span class="badge badge-${evento.deleted ? 'danger' : 'success'}" style="font-size: 0.75rem;">${evento.deleted ? 'Excluído' : 'Presente'}</span>
+                                    <button class="btn-icon" onclick="deletePresencaFromHistory('${evento.presencaId}', '${pessoaId}')" title="Remover Presença" style="color: #dc3545; padding: 4px;">🗑️</button>
+                                </div>
                             </div>
                         `).join('')
                     }
@@ -2790,6 +2919,19 @@ async function showPessoaDetails(pessoaId) {
     } catch (error) {
         console.error(error);
         showToast('Erro ao carregar detalhes: ' + error.message, 'error');
+    }
+}
+
+async function deletePresencaFromHistory(presencaId, pessoaId) {
+    if (confirm('Tem certeza que deseja remover esta presença do histórico?')) {
+        try {
+            await db.collection('presencas').doc(presencaId).delete();
+            logActivity('Remover Presença (Histórico)', `Pessoa ID: ${pessoaId}`, 'presencas');
+            await showPessoaDetails(pessoaId);
+            loadDashboard(); // Atualizar estatísticas globais
+        } catch (error) {
+            showToast('Erro ao remover presença: ' + error.message, 'error');
+        }
     }
 }
 
@@ -2816,7 +2958,10 @@ function showPessoaTab(tab) {
 
 // Relatório de frequência
 async function loadRelatorioFrequencia() {
-    await calculateFrequencias();
+    const startDate = document.getElementById('relatorioInicio')?.value;
+    const endDate = document.getElementById('relatorioFim')?.value;
+
+    await calculateFrequencias(null, startDate, endDate);
     
     const filterType = document.getElementById('filterRelatorioOrdem')?.value || 'maior_freq';
     let displayList = [...pessoas];
@@ -2850,7 +2995,7 @@ async function loadRelatorioFrequencia() {
             <div class="pessoa-frequencia">
                 <div class="pessoa-info">
                     <div style="display: flex; align-items: center; gap: 8px;">
-                        <h4 style="margin: 0;">${pessoa.nome}</h4>
+                        <h4 style="margin: 0;">${escapeHtml(pessoa.nome)}</h4>
                         ${justCount > 0 ? `<span class="badge badge-warning" style="cursor: pointer; font-size: 0.8em; padding: 2px 6px;" onclick="showJustificativasHistory('${pessoa.id}')" title="Ver Justificativas">📝 ${justCount}</span>` : ''}
                     </div>
                     <p>${pessoa.tipo === 'servo' ? 'Servo' : 'Participante'} - ${pessoa.totalEventosElegiveis || 0} eventos elegíveis</p>
@@ -2865,8 +3010,56 @@ async function loadRelatorioFrequencia() {
     }).join('');
 }
 
+function clearRelatorioFilters() {
+    const start = document.getElementById('relatorioInicio');
+    const end = document.getElementById('relatorioFim');
+    if(start) start.value = '';
+    if(end) end.value = '';
+    loadRelatorioFrequencia();
+}
+
+function toggleBirthdayCard(btn) {
+    const card = btn.closest('.card');
+    const content = card.querySelector('.card-content');
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        btn.textContent = '➖';
+    } else {
+        content.style.display = 'none';
+        btn.textContent = '➕';
+    }
+}
+
+function toggleBirthdayMonth(monthKey) {
+    const rows = document.querySelectorAll(`.birthday-row-${monthKey}`);
+    const icon = document.getElementById(`icon-${monthKey}`);
+    
+    let isHidden = false;
+    if (rows.length > 0) {
+        isHidden = rows[0].style.display === 'none';
+    }
+    
+    rows.forEach(row => {
+        row.style.display = isHidden ? '' : 'none';
+    });
+    
+    if (icon) {
+        icon.textContent = isHidden ? '▼' : '▶';
+    }
+}
+
+function setAniversarioView(view) {
+    currentAniversarioView = view;
+    localStorage.setItem('aniversarioView', view);
+    loadAniversariosTab();
+}
+
 function loadAniversariosTab() {
     const container = document.getElementById('aniversariosList');
+    
+    // Atualizar estado dos botões
+    document.getElementById('btnAnivViewCards')?.classList.toggle('active', currentAniversarioView === 'cards');
+    document.getElementById('btnAnivViewList')?.classList.toggle('active', currentAniversarioView === 'list');
     
     const months = [
         'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
@@ -2897,36 +3090,126 @@ function loadAniversariosTab() {
     const today = new Date();
     const currentMonth = today.getMonth();
     const currentDay = today.getDate();
-    
-    container.innerHTML = months.map((monthName, index) => {
-        const people = birthdaysByMonth[index];
-        const isCurrentMonth = index === currentMonth;
-        const cardStyle = isCurrentMonth ? 'border: 2px solid var(--primary);' : '';
+    const currentYear = today.getFullYear();
+
+    if (currentAniversarioView === 'list') {
+        container.className = 'table-container';
         
-        return `
-            <div class="card" style="${cardStyle}">
-                <h3 style="margin-bottom: 1rem; color: var(--primary); border-bottom: 1px solid var(--border); padding-bottom: 0.5rem;">
-                    ${monthName} ${isCurrentMonth ? ' (Atual)' : ''}
-                </h3>
-                ${people.length === 0 ? '<p class="help-text">Nenhum aniversariante.</p>' : 
-                    `<div style="display: flex; flex-direction: column; gap: 0.5rem;">
-                        ${people.map(p => {
-                            const isToday = isCurrentMonth && p.day === currentDay;
-                            const rowClass = isToday ? 'birthday-row birthday-today' : 'birthday-row';
-                            const extraIcon = isToday ? ' 🎂🎉' : '';
-                            
-                            return `
-                            <div class="${rowClass}" onclick="showPessoaDetails('${p.id}')">
-                                <span style="font-weight: 600; min-width: 25px; text-align: center;">${p.day}</span>
-                                <div class="avatar" style="width: 24px; height: 24px; font-size: 0.7em; background-color: ${getAvatarColor(p.nome)}; margin: 0;">${getInitials(p.nome)}</div>
-                                <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${p.nome}${extraIcon}</span>
-                            </div>
-                        `}).join('')}
-                    </div>`
-                }
-            </div>
+        const hasBirthdays = Object.values(birthdaysByMonth).some(arr => arr.length > 0);
+        if (!hasBirthdays) {
+            container.innerHTML = '<p class="help-text">Nenhum aniversariante cadastrado.</p>';
+            return;
+        }
+
+        let html = `
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Data</th>
+                        <th>Nome</th>
+                        <th>Idade (${currentYear})</th>
+                        <th>Telefone</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
         `;
-    }).join('');
+
+        months.forEach((monthName, index) => {
+            const people = birthdaysByMonth[index];
+            if (people.length === 0) return;
+
+            const isCurrentMonth = index === currentMonth;
+            const monthKey = `month-${index}`;
+
+            html += `
+                <tr style="background-color: var(--bg-tertiary); cursor: pointer;" onclick="toggleBirthdayMonth('${monthKey}')">
+                    <td colspan="5" style="font-weight: 600; color: var(--primary); padding: 10px 15px;">
+                        <span id="icon-${monthKey}" style="display:inline-block; width:20px;">▼</span> 
+                        ${escapeHtml(monthName)} ${isCurrentMonth ? '(Atual)' : ''}
+                        <span class="badge badge-primary" style="font-size: 0.7em; margin-left: 10px; vertical-align: middle;">${people.length}</span>
+                    </td>
+                </tr>
+            `;
+
+            people.forEach(p => {
+                const isToday = index === currentMonth && p.day === currentDay;
+                        const parts = p.dataNascimento.split('-');
+                        const birthYear = parseInt(parts[0]);
+                        const turningAge = currentYear - birthYear;
+                        
+                        // Verificar status de envio
+                const birthdayDateKey = `${currentYear}-${index}-${p.day}`;
+                        const storageKey = `birthday_sent_${p.id}_${birthdayDateKey}`;
+                        const isSent = localStorage.getItem(storageKey) === 'true';
+                        
+                        const rowStyle = isToday ? 'background-color: rgba(40, 167, 69, 0.1);' : '';
+                        const dateStyle = isToday ? 'color: var(--success); font-weight: bold;' : '';
+
+                html += `
+                <tr class="birthday-row-${monthKey}" style="${rowStyle}">
+                    <td style="${dateStyle}">${p.day} de ${escapeHtml(monthName)}</td>
+                            <td>
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <div class="avatar" style="width: 24px; height: 24px; font-size: 0.7em; background-color: ${getAvatarColor(p.nome)}">${getInitials(p.nome)}</div>
+                                    <span style="cursor: pointer;" onclick="showPessoaDetails('${p.id}')">${escapeHtml(p.nome)} ${isToday ? '🎂' : ''}</span>
+                                </div>
+                            </td>
+                            <td>${turningAge} anos</td>
+                            <td>${p.telefone || '-'}</td>
+                            <td>
+                                <div style="display: flex; gap: 10px; align-items: center;">
+                                    <button onclick="sendBirthdayMessage('${p.id}', '${p.nome}', '${p.telefone}', '${birthdayDateKey}')" class="btn-icon" style="color: #25D366;" title="Enviar WhatsApp">📱</button>
+                                    <label style="display: flex; align-items: center; gap: 5px; font-size: 0.8em; cursor: pointer;">
+                                        <input type="checkbox" id="check_tab_${p.id}" ${isSent ? 'checked' : ''} onchange="toggleBirthdayMessage('${p.id}', '${birthdayDateKey}', 'check_tab_${p.id}')">
+                                        Enviado
+                                    </label>
+                                </div>
+                            </td>
+                        </tr>
+                        `;
+            });
+        });
+
+        html += `</tbody></table>`;
+        container.innerHTML = html;
+    } else {
+        container.className = 'aniversarios-grid';
+        container.innerHTML = months.map((monthName, index) => {
+            const people = birthdaysByMonth[index];
+            const isCurrentMonth = index === currentMonth;
+            const cardStyle = isCurrentMonth ? 'border: 2px solid var(--primary);' : '';
+            
+            return `
+                <div class="card" style="${cardStyle}">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem;">
+                        <h3 style="margin: 0; color: var(--primary);">
+                            ${escapeHtml(monthName)} ${isCurrentMonth ? ' (Atual)' : ''}
+                        </h3>
+                        <button class="btn-icon" onclick="toggleBirthdayCard(this)" style="padding: 2px 8px; font-size: 0.8em;">➖</button>
+                    </div>
+                    <div class="card-content">
+                        ${people.length === 0 ? '<p class="help-text">Nenhum aniversariante.</p>' : 
+                            `<div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                                ${people.map(p => {
+                                    const isToday = isCurrentMonth && p.day === currentDay;
+                                    const rowClass = isToday ? 'birthday-row birthday-today' : 'birthday-row';
+                                    const extraIcon = isToday ? ' 🎂🎉' : '';
+                                    
+                                    return `
+                                    <div class="${rowClass}" onclick="showPessoaDetails('${p.id}')">
+                                        <span style="font-weight: 600; min-width: 25px; text-align: center;">${p.day}</span>
+                                        <div class="avatar" style="width: 24px; height: 24px; font-size: 0.7em; background-color: ${getAvatarColor(p.nome)}; margin: 0;">${getInitials(p.nome)}</div>
+                                        <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(p.nome)}${extraIcon}</span>
+                                    </div>
+                                `}).join('')}
+                            </div>`
+                        }
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
 }
 
 async function exportAniversariantesPDF() {
@@ -3045,22 +3328,22 @@ function showJustificativasHistory(pessoaId) {
     }).sort((a, b) => new Date(b.eventoData) - new Date(a.eventoData));
 
     const modalBody = `
-        <h2>Justificativas - ${pessoa.nome}</h2>
+        <h2>Justificativas - ${escapeHtml(pessoa.nome)}</h2>
         <div style="max-height: 400px; overflow-y: auto; margin-top: 1rem;">
             ${history.length === 0 ? '<p>Nenhuma justificativa encontrada.</p>' : 
                 history.map(h => `
                     <div class="card" style="margin-bottom: 10px; padding: 10px; border-left: 4px solid #ffc107;">
                         <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                             <div>
-                                <h4 style="margin: 0 0 5px 0;">${h.eventoNome}</h4>
-                                <p style="font-size: 0.85em; color: #666; margin-bottom: 8px;">${formatDate(h.eventoData)} às ${h.eventoHorario}</p>
+                                <h4 style="margin: 0 0 5px 0;">${escapeHtml(h.eventoNome)}</h4>
+                                <p style="font-size: 0.85em; color: #666; margin-bottom: 8px;">${formatDate(h.eventoData)} às ${escapeHtml(h.eventoHorario)}</p>
                             </div>
                             <div>
                                 <button class="btn-icon" onclick="editJustificativaFromHistory('${h.id}', '${pessoaId}')" title="Editar">✏️</button>
                                 <button class="btn-icon" onclick="deleteJustificativaFromHistory('${h.id}', '${pessoaId}')" title="Excluir">🗑️</button>
                             </div>
                         </div>
-                        <p style="background: #f9f9f9; padding: 8px; border-radius: 4px; font-style: italic; margin: 0;">"${h.observation}"</p>
+                        <p style="background: #f9f9f9; padding: 8px; border-radius: 4px; font-style: italic; margin: 0;">"${escapeHtml(h.observation)}"</p>
                     </div>
                 `).join('')
             }
@@ -3126,7 +3409,7 @@ function checkEligibility(pessoa, evento) {
 }
 
 // Calcular frequências
-async function calculateFrequencias(allPresencas = null) {
+async function calculateFrequencias(allPresencas = null, startDate = null, endDate = null) {
     // Se não foi passado (ex: chamado pelo relatório), busca agora
     if (!allPresencas) {
         if (globalPresencas.length > 0) {
@@ -3154,13 +3437,27 @@ async function calculateFrequencias(allPresencas = null) {
         presencasPorPessoa[p.pessoaId].add(p.eventoId);
     });
 
+    // Filtrar eventos se houver datas selecionadas
+    let eventosParaCalculo = eventos;
+    if (startDate && endDate) {
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999); // Incluir o dia final completo
+
+        eventosParaCalculo = eventos.filter(e => {
+            const dataEvento = new Date(e.data);
+            const dataEventoAjustada = new Date(dataEvento.getTime() + dataEvento.getTimezoneOffset() * 60000);
+            return dataEventoAjustada >= start && dataEventoAjustada <= end;
+        });
+    }
+
     for (let pessoa of pessoas) {
         let presencasCount = 0;
         let totalConsiderado = 0;
         let hasEligibleEvents = false;
         const presencasPessoaIds = presencasPorPessoa[pessoa.id] || new Set();
 
-        for (const evento of eventos) {
+        for (const evento of eventosParaCalculo) {
             const isEligible = checkEligibility(pessoa, evento);
             const presente = presencasPessoaIds.has(evento.id);
             const justificado = justificativasSet.has(`${pessoa.id}_${evento.id}`);
@@ -3352,15 +3649,15 @@ function renderEventosTimeline(eventosList, totalPages = 1) {
                         <tr class="event-row-${currentMonth}">
                             ${eventoSelectionMode ? `<td><input type="checkbox" ${selectedEventos.has(evento.id) ? 'checked' : ''} onchange="toggleSelectEvento('${evento.id}')"></td>` : ''}
                             <td>
-                                <strong>${evento.nome}</strong>
+                                <strong>${escapeHtml(evento.nome)}</strong>
                                 ${evento.repete ? '<span class="badge badge-warning" style="font-size: 0.7em; margin-left: 5px;">Semanal</span>' : ''}
                                 <div style="font-size: 0.85em; color: var(--text-secondary); margin-top: 4px; cursor: pointer; width: fit-content;" onclick="event.stopPropagation(); toggleEventTypeFilter('${evento.tipo}')" title="Filtrar por ${evento.tipo}">
-                                    🏷️ ${evento.tipo}
+                                    🏷️ ${escapeHtml(evento.tipo)}
                                 </div>
                             </td>
                             <td>${formatDate(evento.data)}</td>
-                            <td>${evento.horario}</td>
-                            <td>${evento.local}</td>
+                            <td>${escapeHtml(evento.horario)}</td>
+                            <td>${escapeHtml(evento.local)}</td>
                             <td>
                                 <span class="badge badge-${evento.destinatarios === 'todos' ? 'success' : 'primary'}">${evento.destinatarios === 'todos' ? 'Todos' : 'Servos'}</span>
                                 ${evento.ministerios && evento.ministerios.length > 0 ? 
@@ -3370,7 +3667,7 @@ function renderEventosTimeline(eventosList, totalPages = 1) {
                                             const className = style ? 'ministerio-tag' : `ministerio-tag ${getMinisterioColorClass(m)}`;
                                             const isSelected = currentEventMinisterioFilter === m;
                                             const activeStyle = isSelected ? 'border: 2px solid currentColor;' : '';
-                                            return `<span onclick="event.stopPropagation(); toggleEventMinisterioFilter('${m}')" class="${className}" style="${style} ${activeStyle}" title="${isSelected ? 'Remover filtro' : 'Filtrar por ' + m}">${m}</span>`;
+                                            return `<span onclick="event.stopPropagation(); toggleEventMinisterioFilter('${m}')" class="${className}" style="${style} ${activeStyle}" title="${isSelected ? 'Remover filtro' : 'Filtrar por ' + m}">${escapeHtml(m)}</span>`;
                                         }).join('')}
                                     </div>` 
                                 : ''}
@@ -3382,6 +3679,7 @@ function renderEventosTimeline(eventosList, totalPages = 1) {
                                     <div id="menu-evt-${evento.id}" class="action-menu-dropdown">
                                         <button class="action-menu-item" onclick="showEventoPresencas('${evento.id}')">👥 Presenças</button>
                                         <button class="action-menu-item" onclick="showEventoAusentes('${evento.id}')">🚫 Ausentes</button>
+                                        <button class="action-menu-item" onclick="initSorteioEvento('${evento.id}')">🎲 Sortear Presente</button>
                                         <button class="action-menu-item" onclick="showExportOptions('${evento.id}')">📤 Exportar Relatório</button>
                                         <button class="action-menu-item" onclick="editEvento('${evento.id}')">✏️ Editar</button>
                                         <button class="action-menu-item" onclick="duplicateEvento('${evento.id}')">📑 Duplicar</button>
@@ -3419,8 +3717,8 @@ function renderEventosTimeline(eventosList, totalPages = 1) {
                 ${eventoSelectionMode ? `<div style="margin-bottom: 10px;"><input type="checkbox" ${selectedEventos.has(evento.id) ? 'checked' : ''} onchange="toggleSelectEvento('${evento.id}')" style="transform: scale(1.2);"> <span style="font-size: 0.9em; color: var(--text-secondary);">Selecionar</span></div>` : ''}
                 <div class="evento-header">
                     <div>
-                        <h3 class="evento-title">${evento.nome}</h3>
-                        <p class="evento-date">${formatDate(evento.data)} às ${evento.horario}</p>
+                        <h3 class="evento-title">${escapeHtml(evento.nome)}</h3>
+                        <p class="evento-date">${formatDate(evento.data)} às ${escapeHtml(evento.horario)}</p>
                     </div>
                     <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 5px;">
                         <span class="badge badge-${evento.destinatarios === 'todos' ? 'success' : 'primary'}">
@@ -3432,10 +3730,10 @@ function renderEventosTimeline(eventosList, totalPages = 1) {
                     </div>
                 </div>
                 <div class="evento-details">
-                    <span>📍 ${evento.local}</span>
-                    <span style="cursor: pointer; border-bottom: 1px dotted var(--text-secondary);" onclick="event.stopPropagation(); toggleEventTypeFilter('${evento.tipo}')" title="Filtrar por ${evento.tipo}">🏷️ ${evento.tipo}</span>
+                    <span>📍 ${escapeHtml(evento.local)}</span>
+                    <span style="cursor: pointer; border-bottom: 1px dotted var(--text-secondary);" onclick="event.stopPropagation(); toggleEventTypeFilter('${evento.tipo}')" title="Filtrar por ${evento.tipo}">🏷️ ${escapeHtml(evento.tipo)}</span>
                     ${evento.repete ? '<span class="badge badge-warning">Semanal</span>' : ''}
-                    ${evento.observacao ? `<div style="width: 100%; margin-top: 5px; font-style: italic; font-size: 0.85em;">📝 ${evento.observacao}</div>` : ''}
+                    ${evento.observacao ? `<div style="width: 100%; margin-top: 5px; font-style: italic; font-size: 0.85em;">📝 ${escapeHtml(evento.observacao)}</div>` : ''}
                     ${evento.ministerios?.length > 0 ? `
                         <div style="display: flex; flex-wrap: wrap; gap: 5px; align-items: center;">
                             <span style="margin-right: 2px;">⛪</span>
@@ -3444,7 +3742,7 @@ function renderEventosTimeline(eventosList, totalPages = 1) {
                                 const className = style ? 'ministerio-tag' : `ministerio-tag ${getMinisterioColorClass(m)}`;
                                 const isSelected = currentEventMinisterioFilter === m;
                                 const activeStyle = isSelected ? 'border: 2px solid currentColor;' : '';
-                                return `<span onclick="event.stopPropagation(); toggleEventMinisterioFilter('${m}')" class="${className}" style="${style} ${activeStyle}" title="${isSelected ? 'Remover filtro' : 'Filtrar por ' + m}">${m}</span>`;
+                                return `<span onclick="event.stopPropagation(); toggleEventMinisterioFilter('${m}')" class="${className}" style="${style} ${activeStyle}" title="${isSelected ? 'Remover filtro' : 'Filtrar por ' + m}">${escapeHtml(m)}</span>`;
                             }).join('')}
                         </div>
                     ` : ''}
@@ -3452,6 +3750,7 @@ function renderEventosTimeline(eventosList, totalPages = 1) {
                 <div class="evento-actions">
                     <button class="btn-icon" onclick="showEventoPresencas('${evento.id}')" title="Ver Presenças">👥</button>
                     <button class="btn-icon" onclick="showEventoAusentes('${evento.id}')" title="Ver Ausentes">🚫</button>
+                    <button class="btn-icon" onclick="initSorteioEvento('${evento.id}')" title="Sortear Presente">🎲</button>
                     <button class="btn-icon" onclick="showExportOptions('${evento.id}')" title="Exportar Relatório">📤</button>
                     <button class="btn-icon" onclick="editEvento('${evento.id}')" title="Editar">✏️</button>
                     <button class="btn-icon" onclick="duplicateEvento('${evento.id}')" title="Duplicar">📑</button>
@@ -3664,7 +3963,7 @@ async function compareSelectedEventos() {
                 <tbody>
                     ${comparisonData.map(row => `
                         <tr>
-                            <td style="position: sticky; left: 0; background: var(--bg-primary); z-index: 10; border-right: 1px solid var(--border);"><strong>${row.nome}</strong></td>
+                            <td style="position: sticky; left: 0; background: var(--bg-primary); z-index: 10; border-right: 1px solid var(--border);"><strong>${escapeHtml(row.nome)}</strong></td>
                             <td><span class="badge badge-${row.tipo === 'servo' ? 'primary' : 'success'}" style="font-size: 0.7em;">${row.tipo}</span></td>
                             ${selectedEventsList.map(e => {
                                 const cell = row.eventos[e.id];
@@ -3672,7 +3971,7 @@ async function compareSelectedEventos() {
                                 if (cell.statusClass === 'success') badgeClass = 'success';
                                 if (cell.statusClass === 'danger') badgeClass = 'danger';
                                 if (cell.statusClass === 'warning') badgeClass = 'warning';
-                                return `<td><span class="badge badge-${badgeClass}" style="font-size: 0.75em; white-space: normal;">${cell.status}</span></td>`;
+                                return `<td><span class="badge badge-${badgeClass}" style="font-size: 0.75em; white-space: normal;">${escapeHtml(cell.status)}</span></td>`;
                             }).join('')}
                             <td>${row.percentage !== null ? row.percentage.toFixed(0) + '%' : '-'}</td>
                         </tr>
@@ -4017,8 +4316,8 @@ async function showEventoPresencas(eventoId) {
         pessoasPresentes.sort((a, b) => a.nome.localeCompare(b.nome));
         
         const modalBody = `
-            <h2>Presenças - ${evento.nome}</h2>
-            <p style="margin-bottom: 1rem;">${formatDate(evento.data)} às ${evento.horario}</p>
+            <h2>Presenças - ${escapeHtml(evento.nome)}</h2>
+            <p style="margin-bottom: 1rem;">${formatDate(evento.data)} às ${escapeHtml(evento.horario)}</p>
             
             <div style="background: var(--bg-tertiary); padding: 10px; border-radius: 8px; margin-bottom: 15px;">
                 <h4 style="margin-bottom: 8px; font-size: 0.9rem;">Adicionar Presença Manual</h4>
@@ -4037,6 +4336,7 @@ async function showEventoPresencas(eventoId) {
                 <table class="table" style="margin: 0;">
                     <thead>
                         <tr>
+                            <th style="width: 40px;">#</th>
                             <th>Nome</th>
                             <th>Tipo</th>
                             <th style="width: 50px;">Ações</th>
@@ -4044,11 +4344,12 @@ async function showEventoPresencas(eventoId) {
                     </thead>
                     <tbody id="presencasTableBody">
                         ${pessoasPresentes.length === 0 ? 
-                            '<tr><td colspan="3" style="text-align: center;">Nenhuma presença registrada</td></tr>' :
-                            pessoasPresentes.map(p => `
+                            '<tr><td colspan="4" style="text-align: center;">Nenhuma presença registrada</td></tr>' :
+                            pessoasPresentes.map((p, index) => `
                                 <tr>
+                                    <td style="color: var(--text-secondary); font-size: 0.9em;">${index + 1}</td>
                                     <td>
-                                        ${p.nome}
+                                        ${escapeHtml(p.nome)}
                                         ${!checkEligibility(p, evento) ? '<span class="badge badge-warning" style="font-size: 0.7em; margin-left: 5px;">Convidado</span>' : ''}
                                     </td>
                                     <td><span class="badge badge-${p.tipo === 'servo' ? 'primary' : 'success'}">${p.tipo}</span></td>
@@ -4086,7 +4387,7 @@ function searchPeopleToAdd(eventoId, query) {
 
     container.innerHTML = matches.map(p => `
         <div style="padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;" onclick="confirmPresenceManual('${p.id}', '${eventoId}', true)">
-            <span>${p.nome}</span>
+            <span>${escapeHtml(p.nome)}</span>
             <span class="badge badge-${p.tipo === 'servo' ? 'primary' : 'success'}" style="font-size: 0.7em;">${p.tipo}</span>
         </div>
     `).join('');
@@ -4156,7 +4457,7 @@ function filterPresencasTable() {
     const rows = tbody.getElementsByTagName('tr');
 
     for (let i = 0; i < rows.length; i++) {
-        const nameCell = rows[i].getElementsByTagName('td')[0];
+        const nameCell = rows[i].getElementsByTagName('td')[1];
         if (nameCell) {
             const txtValue = nameCell.textContent || nameCell.innerText;
             if (txtValue.toLowerCase().indexOf(filter) > -1) {
@@ -4219,8 +4520,8 @@ async function showEventoAusentes(eventoId) {
         ausentes.sort((a, b) => a.nome.localeCompare(b.nome));
         
         const modalBody = `
-            <h2>Ausentes - ${evento.nome}</h2>
-            <p style="margin-bottom: 1rem;">${formatDate(evento.data)} às ${evento.horario}</p>
+            <h2>Ausentes - ${escapeHtml(evento.nome)}</h2>
+            <p style="margin-bottom: 1rem;">${formatDate(evento.data)} às ${escapeHtml(evento.horario)}</p>
             
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
                 <p><strong>Total de Ausentes: ${ausentes.length}</strong></p>
@@ -4231,6 +4532,7 @@ async function showEventoAusentes(eventoId) {
                 <table class="table" style="margin: 0;">
                     <thead>
                         <tr>
+                            <th style="width: 40px;">#</th>
                             <th>Nome</th>
                             <th>Tipo</th>
                             <th>Telefone</th>
@@ -4239,20 +4541,21 @@ async function showEventoAusentes(eventoId) {
                     </thead>
                     <tbody id="ausentesTableBody">
                         ${ausentes.length === 0 ? 
-                            '<tr><td colspan="4" style="text-align: center;">Todos compareceram! 🎉</td></tr>' :
-                            ausentes.map(p => {
+                            '<tr><td colspan="5" style="text-align: center;">Todos compareceram! 🎉</td></tr>' :
+                            ausentes.map((p, index) => {
                                 const just = currentJustificativas.get(p.id);
                                 return `
                                 <tr>
+                                    <td style="color: var(--text-secondary); font-size: 0.9em;">${index + 1}</td>
                                     <td>
-                                        ${p.nome}
-                                        ${just ? `<div style="font-size: 0.85em; color: #666; margin-top: 4px; font-style: italic;">📝 ${just.observation}</div>` : ''}
+                                        ${escapeHtml(p.nome)}
+                                        ${just ? `<div style="font-size: 0.85em; color: #666; margin-top: 4px; font-style: italic;">📝 ${escapeHtml(just.observation)}</div>` : ''}
                                     </td>
                                     <td><span class="badge badge-${p.tipo === 'servo' ? 'primary' : 'success'}">${p.tipo}</span></td>
-                                    <td>${p.telefone || ''}</td>
+                                    <td>${escapeHtml(p.telefone || '')}</td>
                                     <td>
                                         <button class="btn-icon" onclick="confirmPresenceManual('${p.id}', '${eventoId}')" title="Marcar Presença" style="color: #28a745; margin-right: 5px;">✅</button>
-                                        <button class="btn-icon" onclick="sendAbsentMessage('${p.nome}', '${p.telefone}', '${evento.nome}')" title="Enviar Mensagem" style="color: #25D366; margin-right: 5px;">📱</button>
+                                        <button class="btn-icon" onclick="sendAbsentMessage('${escapeHtml(p.nome)}', '${p.telefone}', '${escapeHtml(evento.nome)}')" title="Enviar Mensagem" style="color: #25D366; margin-right: 5px;">📱</button>
                                         <button class="btn-icon" onclick="justifyAbsence('${p.id}', '${eventoId}')" title="${just ? 'Editar Justificativa' : 'Justificar Ausência'}" style="color: #ffc107;">📝</button>
                                     </td>
                                 </tr>
@@ -4276,7 +4579,7 @@ function filterAusentesTable() {
     const rows = tbody.getElementsByTagName('tr');
 
     for (let i = 0; i < rows.length; i++) {
-        const nameCell = rows[i].getElementsByTagName('td')[0];
+        const nameCell = rows[i].getElementsByTagName('td')[1];
         if (nameCell) {
             const txtValue = nameCell.textContent || nameCell.innerText;
             if (txtValue.toLowerCase().indexOf(filter) > -1) {
@@ -4353,7 +4656,7 @@ function showExportOptions(eventoId) {
 
     const modalBody = `
         <h2>Exportar Relatório</h2>
-        <p style="margin-bottom: 1.5rem; color: var(--text-secondary);">Escolha o formato para o relatório do evento <strong>${evento.nome}</strong>:</p>
+        <p style="margin-bottom: 1.5rem; color: var(--text-secondary);">Escolha o formato para o relatório do evento <strong>${escapeHtml(evento.nome)}</strong>:</p>
         
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
             <button class="btn-secondary" onclick="exportEventoRelatorio('${eventoId}'); closeModal()" style="display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 1.5rem; height: 100%;">
@@ -4935,7 +5238,7 @@ async function loadCheckinEventos(preselectId = null) {
     
     select.innerHTML = '<option value="">Selecione um evento...</option>' +
         eventosDisponiveis.map(e => 
-            `<option value="${e.id}">${e.nome} - ${formatDate(e.data)} ${e.horario}</option>`
+            `<option value="${e.id}">${escapeHtml(e.nome)} - ${formatDate(e.data)} ${escapeHtml(e.horario)}</option>`
         ).join('');
         
     if (preselectId) {
@@ -5021,7 +5324,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('searchResults').innerHTML = results.map(pessoa => `
                 <div class="search-result-item" onclick="doCheckin('${pessoa.id}', 'Busca Manual')">
                     <div>
-                        <strong>${pessoa.nome}</strong>
+                        <strong>${escapeHtml(pessoa.nome)}</strong>
                         <p class="help-text">${pessoa.tipo === 'servo' ? 'Servo' : 'Participante'}</p>
                     </div>
                     <button class="btn-primary">Check-in</button>
@@ -5168,7 +5471,7 @@ async function loadCheckinList(eventoId) {
         const pessoa = pessoas.find(pes => pes.id === p.pessoaId);
         return `
             <div class="checkin-item">
-                <span>${pessoa?.nome || 'Pessoa'}</span>
+                <span>${escapeHtml(pessoa?.nome || 'Pessoa')}</span>
                 <button class="btn-icon" onclick="removeCheckin('${p.id}')" title="Remover">❌</button>
             </div>
         `;
@@ -5317,7 +5620,7 @@ function renderMinisterios() {
                             <td>
                                 <div style="display: flex; align-items: center; gap: 10px;">
                                     <div style="width: 20px; height: 20px; border-radius: 50%; background-color: ${color}; border: 1px solid #cbd5e1;"></div>
-                                    <strong>${m}</strong>
+                                    <strong>${escapeHtml(m)}</strong>
                                 </div>
                             </td>
                             <td>
@@ -5325,7 +5628,7 @@ function renderMinisterios() {
                                     ${coords.length > 0 ? coords.map(c => `
                                         <div style="display: flex; align-items: center; gap: 8px;">
                                             <div class="avatar" style="width: 24px; height: 24px; font-size: 0.7em; background-color: ${getAvatarColor(c.nome)}">${getInitials(c.nome)}</div>
-                                            <span>${c.nome}</span>
+                                            <span>${escapeHtml(c.nome)}</span>
                                         </div>
                                     `).join('') : '<span style="color: var(--text-tertiary); font-style: italic; font-size: 0.9em;">Definir Coordenadores</span>'}
                                     <div style="font-size: 0.8em; opacity: 0.5; margin-top: 2px;">✏️ Editar</div>
@@ -5360,7 +5663,7 @@ function renderMinisterios() {
                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                     <div style="display: flex; align-items: center; gap: 10px;">
                         <div style="width: 20px; height: 20px; border-radius: 50%; background-color: ${ministerioColors[m] || getDefaultMinisterioColor(m)}; border: 1px solid #cbd5e1;"></div>
-                        <h3>${m}</h3>
+                        <h3>${escapeHtml(m)}</h3>
                     </div>
                     <div class="action-menu-container">
                         <button class="action-menu-btn" onclick="toggleActionMenu('min-card-${safeName}', event)">⋮</button>
@@ -5378,7 +5681,7 @@ function renderMinisterios() {
                             ${coords.length > 0 ? coords.map(c => `
                                 <div style="display: flex; align-items: center; gap: 8px;">
                                     <div class="avatar" style="width: 32px; height: 32px; font-size: 0.8em; background-color: ${getAvatarColor(c.nome)}">${getInitials(c.nome)}</div>
-                                    <span style="font-weight: 500;">${c.nome}</span>
+                                    <span style="font-weight: 500;">${escapeHtml(c.nome)}</span>
                                 </div>
                             `).join('') : '<span style="color: var(--text-tertiary); font-style: italic;">Toque para definir</span>'}
                         </div>
@@ -5393,7 +5696,7 @@ function loadMinisteriosOptions() {
     const select = document.getElementById('filterMinisterio');
     if (select) {
         select.innerHTML = '<option value="">Todos os Ministérios</option>' +
-            ministerios.map(m => `<option value="${m}">${m}</option>`).join('');
+            ministerios.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
     }
 }
 
@@ -5402,7 +5705,7 @@ function loadEventTypeOptions() {
     if (select) {
         const currentValue = select.value;
         select.innerHTML = '<option value="">Todos os Tipos</option>' +
-            eventTypes.map(t => `<option value="${t}">${t}</option>`).join('');
+            eventTypes.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
         if (eventTypes.includes(currentValue)) select.value = currentValue;
     }
 }
@@ -5505,7 +5808,7 @@ function editMinisterioCoordinator(ministerioName) {
     const servos = pessoas.filter(p => p.tipo === 'servo').sort((a, b) => a.nome.localeCompare(b.nome));
     
     const modalBody = `
-        <h2>Coordenadores - ${ministerioName}</h2>
+        <h2>Coordenadores - ${escapeHtml(ministerioName)}</h2>
         <p class="help-text" style="margin-bottom: 1rem;">Selecione os coordenadores responsáveis por este ministério.</p>
         
         <div class="form-group">
@@ -5516,7 +5819,7 @@ function editMinisterioCoordinator(ministerioName) {
                         <input type="checkbox" id="coord_${p.id}" value="${p.id}" ${currentCoordIds.includes(p.id) ? 'checked' : ''}>
                         <label for="coord_${p.id}" style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
                             <div class="avatar" style="width: 24px; height: 24px; font-size: 0.7em; background-color: ${getAvatarColor(p.nome)}; margin: 0;">${getInitials(p.nome)}</div>
-                            ${p.nome}
+                            ${escapeHtml(p.nome)}
                         </label>
                     </div>
                 `).join('')}
@@ -5757,7 +6060,7 @@ async function loadPendingCoordinators() {
     
     container.innerHTML = pending.map(user => `
         <div class="card">
-            <p><strong>${user.email}</strong></p>
+            <p><strong>${escapeHtml(user.email)}</strong></p>
             <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
                 <button class="btn-primary" onclick="approveCoordinator('${user.id}')">Aprovar</button>
                 <button class="btn-danger" onclick="rejectCoordinator('${user.id}')">Rejeitar</button>
@@ -5817,7 +6120,7 @@ async function loadActiveCoordinators() {
     container.innerHTML = active.map(user => `
         <div class="card" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding: 1rem;">
             <div>
-                <p style="margin-bottom: 5px;"><strong>${user.email}</strong></p>
+                <p style="margin-bottom: 5px;"><strong>${escapeHtml(user.email)}</strong></p>
                 <p class="help-text" style="margin: 0;">Entrou em: ${user.createdAt ? formatDate(user.createdAt.toDate()) : 'Data desconhecida'}</p>
             </div>
             <button class="btn-danger" onclick="removeCoordinator('${user.id}')" style="padding: 5px 10px; font-size: 0.9em;">Remover</button>
@@ -5891,7 +6194,7 @@ async function checkOrphanedPresences() {
     for (const [evtId, personIds] of Object.entries(groups)) {
         const personNames = personIds.map(id => {
             const p = pessoas.find(pes => pes.id === id);
-            return p ? p.nome : 'Pessoa Desconhecida';
+            return p ? escapeHtml(p.nome) : 'Pessoa Desconhecida';
         }).sort().join(', ');
         
         html += `
@@ -5964,6 +6267,123 @@ function calculateAge(birthDate) {
     return age;
 }
 
+// ==================== SORTEIO ====================
+
+function initSorteioGeral() {
+    if (pessoas.length === 0) return showToast("Nenhuma pessoa cadastrada.", "warning");
+    runRaffleAnimation(pessoas, "Sorteio Geral (Todas as Pessoas)");
+}
+
+async function initSorteioEvento(eventoId) {
+    const evento = eventos.find(e => e.id === eventoId);
+    if (!evento) return;
+
+    try {
+        const presencasSnapshot = await db.collection('presencas')
+            .where('groupId', '==', currentGroupId)
+            .where('eventoId', '==', eventoId)
+            .get();
+
+        if (presencasSnapshot.empty) {
+            return showToast("Nenhuma presença registrada neste evento.", "warning");
+        }
+
+        const presentesIds = new Set(presencasSnapshot.docs.map(doc => doc.data().pessoaId));
+        const candidatos = pessoas.filter(p => presentesIds.has(p.id));
+
+        if (candidatos.length === 0) return showToast("Nenhum presente encontrado na lista de pessoas.", "warning");
+
+        runRaffleAnimation(candidatos, `Sorteio - ${evento.nome}`, evento.nome);
+    } catch (error) {
+        console.error(error);
+        showToast("Erro ao carregar presenças para sorteio.", "error");
+    }
+}
+
+function runRaffleAnimation(candidates, title, eventName = null) {
+    window.currentRaffleCandidates = candidates;
+    window.currentRaffleTitle = title;
+    window.currentRaffleEventName = eventName;
+    
+    const modalBody = `
+        <h2>${escapeHtml(title)}</h2>
+        <p class="help-text" style="text-align: center;">Participantes: ${candidates.length}</p>
+        <div style="text-align: center; padding: 2rem; overflow: hidden;">
+            <div id="raffleDisplay" style="font-size: 2rem; font-weight: bold; color: var(--primary); min-height: 80px; display: flex; align-items: center; justify-content: center; margin-bottom: 1rem; border: 2px dashed var(--border); border-radius: 12px; background: var(--bg-tertiary);">
+                🎰 Preparado?
+            </div>
+            
+            <button id="btnRaffleAction" onclick="startRaffleLogic()" class="btn-primary" style="font-size: 1.2rem; padding: 12px 30px; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);">
+                Sortear
+            </button>
+            
+            <div id="raffleWinner" style="display: none; animation: slideUp 0.5s ease;">
+                <p style="font-size: 1.1rem; color: var(--text-secondary); margin-bottom: 10px;">🎉 O ganhador é:</p>
+                <div id="winnerName" style="font-size: 2.2rem; font-weight: 800; color: var(--success); margin-bottom: 20px; line-height: 1.2;"></div>
+                <div class="avatar" id="winnerAvatar" style="width: 80px; height: 80px; font-size: 2rem; margin: 0 auto 20px auto;"></div>
+                <div>
+                    <button onclick="startRaffleLogic()" class="btn-secondary">Sortear Novamente</button>
+                </div>
+            </div>
+        </div>
+    `;
+    showModal(modalBody);
+}
+
+window.startRaffleLogic = function() {
+    const candidates = window.currentRaffleCandidates;
+    const display = document.getElementById('raffleDisplay');
+    const btn = document.getElementById('btnRaffleAction');
+    const winnerDiv = document.getElementById('raffleWinner');
+    const winnerName = document.getElementById('winnerName');
+    const winnerAvatar = document.getElementById('winnerAvatar');
+
+    if (!candidates || candidates.length === 0) return;
+
+    btn.style.display = 'none';
+    winnerDiv.style.display = 'none';
+    display.style.display = 'flex';
+
+    let duration = 2500; 
+    let interval = 50;
+    let elapsed = 0;
+    let timer;
+
+    const tick = () => {
+        const random = candidates[Math.floor(Math.random() * candidates.length)];
+        display.textContent = random.nome;
+        
+        elapsed += interval;
+        
+        if (elapsed < duration) {
+            // Efeito de desaceleração
+            if (elapsed > duration * 0.7) interval *= 1.1;
+            timer = setTimeout(tick, interval);
+        } else {
+            // Finalizar
+            const winner = candidates[Math.floor(Math.random() * candidates.length)];
+            display.style.display = 'none';
+            
+            winnerName.textContent = winner.nome;
+            winnerAvatar.textContent = getInitials(winner.nome);
+            winnerAvatar.style.backgroundColor = getAvatarColor(winner.nome);
+            
+            winnerDiv.style.display = 'block';
+
+            // Registrar no log
+            let details = `Ganhador: ${winner.nome}`;
+            if (window.currentRaffleEventName) {
+                details += `\nEvento: ${window.currentRaffleEventName}`;
+            } else {
+                details += `\n${window.currentRaffleTitle}`;
+            }
+            logActivity('Sorteio', details, 'geral');
+        }
+    };
+    
+    tick();
+}
+
 function formatDate(dateString) {
     if (!dateString) return '';
     // Correção para datas YYYY-MM-DD aparecerem corretamente independente do fuso horário
@@ -5973,6 +6393,1220 @@ function formatDate(dateString) {
     }
     const date = new Date(dateString);
     return date.toLocaleDateString('pt-BR');
+}
+
+// ==================== RETIROS ====================
+
+async function updateVisibleRetirosMap() {
+    if (!currentGroupId) return;
+    try {
+        const retirosSnap = await db.collection('retiros')
+            .where('groupId', '==', currentGroupId)
+            .where('showInPersonList', '==', true)
+            .get();
+
+        if (retirosSnap.empty) {
+            globalPersonRetirosMap = {};
+            return;
+        }
+
+        const visibleRetiros = retirosSnap.docs.map(doc => ({id: doc.id, name: doc.data().nome}));
+        const visibleRetiroIds = visibleRetiros.map(r => r.id);
+        const retiroNames = {};
+        visibleRetiros.forEach(r => retiroNames[r.id] = r.name);
+
+        let participants = [];
+        // Firestore 'in' query suporta max 10. Se houver mais, fazemos em lotes.
+        const chunks = [];
+        for (let i = 0; i < visibleRetiroIds.length; i += 10) {
+            chunks.push(visibleRetiroIds.slice(i, i + 10));
+        }
+
+        for (const chunk of chunks) {
+            const snap = await db.collection('retiro_participantes')
+                .where('groupId', '==', currentGroupId)
+                .where('retiroId', 'in', chunk)
+                .get();
+            participants = participants.concat(snap.docs.map(d => d.data()));
+        }
+
+        const map = {};
+        participants.forEach(p => {
+            if (p.personId) {
+                if (!map[p.personId]) map[p.personId] = [];
+                const rName = retiroNames[p.retiroId];
+                if (rName) {
+                    const isTeam = p.category === 'equipe';
+                    // Evitar duplicatas
+                    if (!map[p.personId].some(item => item.name === rName && item.isTeam === isTeam)) {
+                        map[p.personId].push({ name: rName, isTeam: isTeam });
+                    }
+                }
+            }
+        });
+        globalPersonRetirosMap = map;
+    } catch (e) {
+        console.error("Error updating visible retiros map:", e);
+    }
+}
+
+async function renderRetirosListFromData(retiros, container) {
+    if (retiros.length === 0) {
+        container.innerHTML = '<p class="help-text">Nenhum retiro cadastrado.</p>';
+        return;
+    }
+
+    try {
+        // Buscar contagem de participantes para cada retiro
+        const retirosWithCount = await Promise.all(retiros.map(async r => {
+            const partSnapshot = await db.collection('retiro_participantes')
+                .where('groupId', '==', currentGroupId)
+                .where('retiroId', '==', r.id)
+                .get();
+            return { ...r, count: partSnapshot.size };
+        }));
+
+        container.innerHTML = retirosWithCount.map(r => `
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+                    <div>
+                        <h3 style="margin: 0; color: var(--primary);">${escapeHtml(r.nome)}</h3>
+                        <p style="font-size: 0.9em; color: var(--text-secondary);">${formatDate(r.data)}</p>
+                    </div>
+                    <span class="badge badge-primary">👥 ${r.count}</span>
+                </div>
+                <p style="font-size: 0.9em; margin-bottom: 15px;">📍 ${escapeHtml(r.local || 'Local não informado')}</p>
+                <div style="display: flex; gap: 5px; border-top: 1px solid var(--border); padding-top: 10px;">
+                    <button class="btn-secondary" style="flex: 1;" onclick="openRetiroGestao('${r.id}')">💰 Gestão</button>
+                    <button class="btn-icon" onclick="showRetiroForm('${r.id}')" title="Editar">✏️</button>
+                    <button class="btn-icon" onclick="deleteRetiro('${r.id}')" title="Excluir" style="color: var(--danger);">🗑️</button>
+                </div>
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error("Erro ao renderizar lista:", error);
+        container.innerHTML = '<p class="help-text">Erro ao carregar detalhes dos retiros.</p>';
+    }
+}
+
+async function loadRetiros() {
+    const container = document.getElementById('retirosList');
+    container.innerHTML = '<p class="help-text">Carregando retiros...</p>';
+
+    try {
+        // Tenta query otimizada (requer índice composto)
+        const snapshot = await db.collection('retiros')
+            .where('groupId', '==', currentGroupId)
+            .orderBy('data', 'desc')
+            .get();
+
+        const retiros = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        // Garantir ordenação cronológica (mais recente primeiro)
+        retiros.sort((a, b) => {
+            const dateA = new Date(a.data || '1970-01-01');
+            const dateB = new Date(b.data || '1970-01-01');
+            return dateB - dateA;
+        });
+
+        populateRetiroFilterOptions(retiros);
+        await renderRetirosListFromData(retiros, container);
+
+    } catch (error) {
+        console.error(error);
+        
+        // Fallback: Se der erro de permissão ou índice, tenta sem ordenação
+        if (error.code === 'permission-denied' || error.code === 'failed-precondition') {
+            try {
+                console.warn("Tentando carregar sem ordenação (fallback)...");
+                const snapshot = await db.collection('retiros')
+                    .where('groupId', '==', currentGroupId)
+                    .get();
+                
+                const retiros = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                // Ordenar no cliente
+                retiros.sort((a, b) => {
+                    const dateA = new Date(a.data || '1970-01-01');
+                    const dateB = new Date(b.data || '1970-01-01');
+                    return dateB - dateA;
+                });
+                populateRetiroFilterOptions(retiros);
+                
+                await renderRetirosListFromData(retiros, container);
+                return;
+            } catch (innerError) {
+                console.error("Erro no fallback:", innerError);
+                container.innerHTML = `<p class="help-text" style="color: var(--danger)">Erro de Permissão: Verifique se as Regras do Firestore incluem 'retiros'.</p>`;
+                return;
+            }
+        }
+        
+        container.innerHTML = `<p class="help-text" style="color: var(--danger)">Erro: ${error.message}</p>`;
+    }
+}
+
+function showRetiroTab(tab) {
+    document.querySelectorAll('#retiros .tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('#retiros .tab-content').forEach(c => c.classList.remove('active'));
+    
+    const btn = document.querySelector(`#retiros button[onclick="showRetiroTab('${tab}')"]`);
+    if (btn) btn.classList.add('active');
+    
+    if (tab === 'lista') {
+        document.getElementById('retiroLista').classList.add('active');
+    } else {
+        document.getElementById('retiroFiltro').classList.add('active');
+    }
+}
+
+function populateRetiroFilterOptions(retiros) {
+    const select = document.getElementById('filterRetiroSelect');
+    if (!select) return;
+    
+    let html = `
+        <option value="">Selecione uma opção...</option>
+        <option value="none">🚫 Pessoas que nunca fizeram retiro</option>
+        <optgroup label="Participantes por Retiro">
+    `;
+    
+    retiros.forEach(r => {
+        html += `<option value="${r.id}">${escapeHtml(r.nome)} (${formatDate(r.data)})</option>`;
+    });
+    
+    html += `</optgroup>`;
+    select.innerHTML = html;
+}
+
+async function filterRetiroParticipants() {
+    const select = document.getElementById('filterRetiroSelect');
+    const container = document.getElementById('retiroFilterResults');
+    const value = select.value;
+    
+    if (!value) {
+        container.innerHTML = '<p class="help-text">Selecione uma opção acima para ver os resultados.</p>';
+        return;
+    }
+    
+    container.innerHTML = '<p class="help-text">Carregando...</p>';
+    
+    try {
+        if (value === 'none') {
+            // Buscar todos os participantes de todos os retiros do grupo
+            const snapshot = await db.collection('retiro_participantes')
+                .where('groupId', '==', currentGroupId)
+                .get();
+                
+            const participantIds = new Set();
+            snapshot.docs.forEach(doc => {
+                const data = doc.data();
+                if (data.personId) participantIds.add(data.personId);
+            });
+            
+            const neverParticipated = pessoas.filter(p => !participantIds.has(p.id));
+            neverParticipated.sort((a, b) => a.nome.localeCompare(b.nome));
+            
+            if (neverParticipated.length === 0) {
+                container.innerHTML = '<p class="help-text">Todas as pessoas cadastradas já participaram de algum retiro! 🎉</p>';
+                return;
+            }
+            
+            renderRetiroFilterTable(neverParticipated, 'never');
+            
+        } else {
+            // Retiro específico
+            const snapshot = await db.collection('retiro_participantes')
+                .where('groupId', '==', currentGroupId)
+                .where('retiroId', '==', value)
+                .orderBy('nome')
+                .get();
+                
+            if (snapshot.empty) {
+                container.innerHTML = '<p class="help-text">Nenhum participante encontrado neste retiro.</p>';
+                return;
+            }
+            
+            const participants = snapshot.docs.map(doc => doc.data());
+            renderRetiroFilterTable(participants, 'specific');
+        }
+    } catch (error) {
+        console.error(error);
+        container.innerHTML = `<p class="help-text" style="color: var(--danger)">Erro ao carregar dados: ${error.message}</p>`;
+    }
+}
+
+function renderRetiroFilterTable(list, type) {
+    const container = document.getElementById('retiroFilterResults');
+    
+    let html = `
+        <div style="margin-bottom: 10px; font-weight: bold;">Total: ${list.length}</div>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Nome</th>
+                    <th>Tipo</th>
+                    ${type === 'never' ? '<th>Telefone</th><th>Ações</th>' : ''}
+                </tr>
+            </thead>
+            <tbody>
+    `;
+    
+    list.forEach(item => {
+        let nome, tipoBadge, telefoneCell = '', actionsCell = '';
+        
+        if (type === 'specific') {
+            nome = item.nome;
+            const tipoLabel = item.tipo === 'interno' ? 'Cadastrado' : 'Externo';
+            const badgeClass = item.tipo === 'interno' ? 'success' : 'warning';
+            tipoBadge = `<span class="badge badge-${badgeClass}">${tipoLabel}</span>`;
+        } else {
+            nome = item.nome;
+            const badgeClass = item.tipo === 'servo' ? 'primary' : 'success';
+            tipoBadge = `<span class="badge badge-${badgeClass}">${item.tipo}</span>`;
+            telefoneCell = `<td>${item.telefone || '-'}</td>`;
+            
+            if (item.telefone) {
+                actionsCell = `<td><button class="btn-icon" onclick="openPersonWhatsApp('${escapeHtml(item.nome)}', '${escapeHtml(item.telefone)}')" title="Enviar WhatsApp" style="color: #25D366;">📱</button></td>`;
+            } else {
+                actionsCell = `<td><span style="color: var(--text-tertiary);">-</span></td>`;
+            }
+        }
+        
+        html += `
+            <tr>
+                <td>${escapeHtml(nome)}</td>
+                <td>${tipoBadge}</td>
+                ${telefoneCell}
+                ${actionsCell}
+            </tr>
+        `;
+    });
+    
+    html += `</tbody></table>`;
+    container.innerHTML = html;
+}
+
+function showRetiroForm(retiroId = null) {
+    // Se for edição, buscar dados (poderia buscar do banco, mas vamos tentar pegar do DOM ou recarregar é rápido)
+    // Para simplificar, vamos buscar do banco se tiver ID
+    let retiro = null;
+    
+    const renderForm = (data = null) => {
+        const modalBody = `
+            <h2>${data ? 'Editar' : 'Novo'} Retiro</h2>
+            <form id="retiroForm">
+                <div class="form-group">
+                    <label>Nome do Retiro *</label>
+                    <input type="text" id="retiroNome" class="input-field" value="${data?.nome || ''}" required>
+                </div>
+                <div class="form-group">
+                    <label>Data *</label>
+                    <input type="date" id="retiroData" class="input-field" value="${data?.data || ''}" required>
+                </div>
+                <div class="form-group">
+                    <label>Local</label>
+                    <input type="text" id="retiroLocal" class="input-field" value="${data?.local || ''}">
+                </div>
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="retiroShowInList" ${data?.showInPersonList ? 'checked' : ''} style="width: 18px; height: 18px;">
+                        Mostrar etiqueta na lista de pessoas
+                    </label>
+                    <p class="help-text" style="margin-top: 4px;">Se marcado, aparecerá uma etiqueta com o nome do retiro nos participantes.</p>
+                </div>
+                <button type="submit" class="btn-primary">${data ? 'Salvar Alterações' : 'Criar Retiro'}</button>
+            </form>
+        `;
+        showModal(modalBody);
+
+        document.getElementById('retiroForm').onsubmit = async (e) => {
+            e.preventDefault();
+            await saveRetiro(retiroId);
+        };
+    };
+
+    if (retiroId) {
+        db.collection('retiros').doc(retiroId).get().then(doc => {
+            if (doc.exists) renderForm(doc.data());
+        });
+    } else {
+        renderForm();
+    }
+}
+
+async function saveRetiro(retiroId) {
+    const nome = document.getElementById('retiroNome').value;
+    const data = document.getElementById('retiroData').value;
+    const local = document.getElementById('retiroLocal').value;
+    const showInPersonList = document.getElementById('retiroShowInList').checked;
+
+    const retiroData = {
+        nome, data, local, showInPersonList,
+        groupId: currentGroupId,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    try {
+        if (retiroId) {
+            await db.collection('retiros').doc(retiroId).update(retiroData);
+            logActivity('Editar Retiro', `Nome: ${nome}`, 'retiros');
+        } else {
+            retiroData.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+            await db.collection('retiros').add(retiroData);
+            logActivity('Criar Retiro', `Nome: ${nome}`, 'retiros');
+        }
+        closeModal();
+        loadRetiros();
+        showToast('Retiro salvo com sucesso!', 'success');
+        await updateVisibleRetirosMap();
+    } catch (error) {
+        showToast('Erro ao salvar: ' + error.message, 'error');
+    }
+}
+
+async function deleteRetiro(retiroId) {
+    if (!confirm('Tem certeza? Isso excluirá o retiro e a lista de participantes dele.')) return;
+    
+    try {
+        // Excluir participantes primeiro
+        const parts = await db.collection('retiro_participantes')
+            .where('groupId', '==', currentGroupId)
+            .where('retiroId', '==', retiroId)
+            .get();
+        const batch = db.batch();
+        parts.forEach(doc => batch.delete(doc.ref));
+        batch.delete(db.collection('retiros').doc(retiroId));
+        
+        await batch.commit();
+        loadRetiros();
+        showToast('Retiro excluído.', 'success');
+        await updateVisibleRetirosMap();
+    } catch (error) {
+        showToast('Erro ao excluir: ' + error.message, 'error');
+    }
+}
+
+async function openRetiroGestao(retiroId) {
+    currentRetiroId = retiroId;
+    currentRetiroTab = 'participantes';
+    currentTeamRoleFilter = '';
+    
+    // Navegação manual para a seção de gestão
+    document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
+    document.getElementById('retiro-gestao').classList.add('active');
+    
+    const container = document.getElementById('gestaoRetiroContent');
+    container.innerHTML = '<p class="help-text">Carregando dados do retiro...</p>';
+
+    try {
+    const retiroDoc = await db.collection('retiros').doc(retiroId).get();
+        if (!retiroDoc.exists) {
+            showToast('Retiro não encontrado.', 'error');
+            showSection('retiros');
+            return;
+        }
+    const retiro = retiroDoc.data();
+        document.getElementById('gestaoRetiroTitle').textContent = retiro.nome;
+
+        await renderRetiroGestao(retiroId, retiro);
+    } catch (error) {
+        console.error(error);
+        container.innerHTML = `<p class="help-text" style="color: var(--danger)">Erro ao carregar: ${error.message}</p>`;
+    }
+}
+
+function switchRetiroTab(tab) {
+    currentRetiroTab = tab;
+    const retiroDoc = { data: () => ({}) }; // Mock simples pois renderRetiroGestao busca do banco
+    db.collection('retiros').doc(currentRetiroId).get().then(doc => renderRetiroGestao(currentRetiroId, doc.data()));
+}
+
+function toggleTeamRoleCard(btn) {
+    const card = btn.closest('.card');
+    const content = card.querySelector('.card-content');
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        btn.textContent = '➖';
+    } else {
+        content.style.display = 'none';
+        btn.textContent = '➕';
+    }
+}
+
+function promptRegisterExternal(participantId, name) {
+    if (confirm(`Deseja cadastrar "${name}" no sistema?\nIsso criará um novo cadastro de pessoa e vinculará a este participante.`)) {
+        showPessoaForm(null, {
+            nome: name,
+            onSave: async (newPersonId) => {
+                try {
+                    await db.collection('retiro_participantes').doc(participantId).update({
+                        personId: newPersonId,
+                        tipo: 'interno'
+                    });
+                    showToast('Participante vinculado com sucesso!', 'success');
+                    
+                    // Atualizar a lista se estiver na tela de gestão
+                    if (currentRetiroId) {
+                        const retiroDoc = await db.collection('retiros').doc(currentRetiroId).get();
+                        if (retiroDoc.exists) {
+                            renderRetiroGestao(currentRetiroId, retiroDoc.data());
+                        }
+                    }
+                    await updateVisibleRetirosMap();
+                } catch (e) {
+                    console.error(e);
+                    showToast('Erro ao vincular: ' + e.message, 'error');
+                }
+            }
+        });
+    }
+}
+
+async function renderRetiroGestao(retiroId, retiroData) {
+    const container = document.getElementById('gestaoRetiroContent');
+    
+    // Buscar participantes
+    const snapshot = await db.collection('retiro_participantes')
+        .where('groupId', '==', currentGroupId)
+        .where('retiroId', '==', retiroId)
+        .get();
+
+    const allData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    
+    // Ordenar por data de adição (mais recente primeiro)
+    allData.sort((a, b) => {
+        const timeA = a.addedAt && a.addedAt.toMillis ? a.addedAt.toMillis() : 0;
+        const timeB = b.addedAt && b.addedAt.toMillis ? b.addedAt.toMillis() : 0;
+        return timeB - timeA;
+    });
+
+    const participants = allData.filter(p => p.category !== 'equipe');
+    const team = allData.filter(p => p.category === 'equipe');
+    
+    // Cálculos Financeiros
+    const defaultPrice = retiroData.defaultPrice || 0;
+    const defaultTeamPrice = retiroData.defaultTeamPrice || 0;
+    let totalExpected = 0;
+    let totalPaid = 0;
+    let totalParticipants = participants.length;
+    let paidCount = 0;
+
+    participants.forEach(p => {
+        const price = p.price !== undefined ? p.price : defaultPrice;
+        const paid = p.paid || 0;
+        totalExpected += Number(price);
+        totalPaid += Number(paid);
+        if (paid >= price && price > 0) paidCount++;
+    });
+
+    const pendingAmount = totalExpected - totalPaid;
+
+    let html = `
+        <div class="tabs">
+            <button class="tab ${currentRetiroTab === 'participantes' ? 'active' : ''}" onclick="switchRetiroTab('participantes')">Participantes (${participants.length})</button>
+            <button class="tab ${currentRetiroTab === 'equipe' ? 'active' : ''}" onclick="switchRetiroTab('equipe')">Equipe de Trabalho (${team.length})</button>
+        </div>
+    `;
+
+    if (currentRetiroTab === 'participantes') {
+        html += `
+        <!-- Cards de Resumo Financeiro -->
+        <div class="dashboard-grid" style="margin-bottom: 1.5rem;">
+            <div class="stat-card" style="padding: 1rem;">
+                <div class="stat-icon" style="background: #dcfce7; color: #166534;">💰</div>
+                <div class="stat-content">
+                    <h3 style="font-size: 1.5rem;">R$ ${totalPaid.toFixed(2)}</h3>
+                    <p>Total Arrecadado</p>
+                </div>
+            </div>
+            <div class="stat-card" style="padding: 1rem;">
+                <div class="stat-icon" style="background: #fee2e2; color: #991b1b;">⚠️</div>
+                <div class="stat-content">
+                    <h3 style="font-size: 1.5rem;">R$ ${pendingAmount.toFixed(2)}</h3>
+                    <p>Pendente</p>
+                </div>
+            </div>
+            <div class="stat-card" style="padding: 1rem;">
+                <div class="stat-icon" style="background: #e0f2fe; color: #075985;">👥</div>
+                <div class="stat-content">
+                    <h3 style="font-size: 1.5rem;">${paidCount}/${totalParticipants}</h3>
+                    <p>Pagamentos Concluídos</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configuração e Adição -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+            <div class="card" style="margin-bottom: 0;">
+                <h4 style="margin-bottom: 10px;">⚙️ Configuração Financeira</h4>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label style="font-size: 0.9em;">Valor Padrão por Pessoa (R$)</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="number" id="retiroDefaultPrice" class="input-field" value="${defaultPrice}" step="0.01" min="0">
+                        <button class="btn-primary" onclick="updateRetiroDefaultPrice('${retiroId}')">Salvar</button>
+                    </div>
+                    <p class="help-text">Alterar isso afetará novos participantes.</p>
+                </div>
+            </div>
+        
+            <div class="card" style="margin-bottom: 0; overflow: visible;">
+                <h4 style="margin-bottom: 10px;">➕ Adicionar Participante</h4>
+                <div style="position: relative;">
+                    <input type="text" id="searchRetiroPart" placeholder="Buscar pessoa cadastrada..." class="input-field" onkeyup="searchPeopleForRetiro('${retiroId}', this.value)" autocomplete="off">
+                    <div id="searchRetiroResults" style="position: absolute; top: 100%; left: 0; right: 0; background: var(--bg-primary); border: 1px solid var(--border); max-height: 200px; overflow-y: auto; z-index: 1000; display: none; box-shadow: 0 4px 15px rgba(0,0,0,0.2); border-radius: 0 0 8px 8px;"></div>
+                </div>
+                <div style="display: flex; gap: 5px; margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 10px;">
+                    <input type="text" id="externalNameRetiro" placeholder="Ou nome de pessoa externa" class="input-field">
+                    <button class="btn-primary" onclick="addRetiroParticipant('${retiroId}', null, document.getElementById('externalNameRetiro').value, 'externo')">Adicionar</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lista de Participantes -->
+        <div class="table-container">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Nome</th>
+                        <th>Tipo</th>
+                        <th>Valor (R$)</th>
+                        <th>Pago (R$)</th>
+                        <th>Status</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${participants.length === 0 ? '<tr><td colspan="6" style="text-align: center;">Nenhum participante.</td></tr>' : 
+                    participants.map(p => {
+                        const price = p.price !== undefined ? p.price : defaultPrice;
+                        const paid = p.paid || 0;
+                        let statusBadge = '';
+                        
+                        if (paid >= price && price > 0) statusBadge = '<span class="badge badge-success">Pago</span>';
+                        else if (paid > 0) statusBadge = '<span class="badge badge-warning">Parcial</span>';
+                        else statusBadge = '<span class="badge badge-danger">Pendente</span>';
+
+                        const isExternal = p.tipo !== 'interno';
+                        const nameDisplay = isExternal 
+                            ? `<span style="cursor: pointer; border-bottom: 1px dashed var(--text-secondary);" onclick="promptRegisterExternal('${p.id}', '${escapeHtml(p.nome)}')" title="Clique para cadastrar esta pessoa">${escapeHtml(p.nome)}</span>` 
+                            : escapeHtml(p.nome);
+
+                        return `
+                        <tr>
+                            <td>${nameDisplay}</td>
+                            <td><span class="badge badge-${p.tipo === 'interno' ? 'success' : 'primary'}" style="font-size: 0.7em;">${p.tipo === 'interno' ? 'Cadastrado' : 'Externo'}</span></td>
+                            <td>
+                                <input type="number" class="input-field" style="width: 80px; padding: 4px;" value="${price}" onchange="updateParticipantPayment('${p.id}', 'price', this.value)" step="0.01">
+                            </td>
+                            <td>
+                                <div style="display: flex; align-items: center; gap: 5px;">
+                                    <input type="number" class="input-field" style="width: 80px; padding: 4px;" value="${paid}" onchange="updateParticipantPayment('${p.id}', 'paid', this.value)" step="0.01">
+                                    <button class="btn-icon" onclick="updateParticipantPayment('${p.id}', 'paid', '${price}')" title="Pagar Total" style="color: var(--success); padding: 2px;">✅</button>
+                                </div>
+                            </td>
+                            <td>${statusBadge}</td>
+                            <td>
+                                <button class="btn-icon" style="color: var(--danger);" onclick="removeRetiroParticipant('${p.id}', '${retiroId}')" title="Remover">🗑️</button>
+                            </td>
+                        </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    } else {
+        // ==================== ABA EQUIPE ====================
+        
+        const definedRoles = retiroData.roles || [];
+        const usedRoles = new Set(team.map(m => m.role).filter(r => r));
+        const allRoles = Array.from(new Set([...definedRoles, ...usedRoles])).sort();
+
+        html += `
+        <div style="margin-bottom: 1.5rem;">
+            <div class="card" style="margin-bottom: 1.5rem;">
+                <h4 style="margin-bottom: 10px;">⚙️ Configuração Financeira (Equipe)</h4>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label style="font-size: 0.9em;">Valor Padrão por Membro (R$)</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="number" id="retiroDefaultTeamPrice" class="input-field" value="${defaultTeamPrice}" step="0.01" min="0">
+                        <button class="btn-primary" onclick="updateRetiroDefaultTeamPrice('${retiroId}')">Salvar</button>
+                    </div>
+                    <p class="help-text">Alterar isso afetará novos membros da equipe.</p>
+                </div>
+            </div>
+
+            <div class="card" style="margin-bottom: 1.5rem; background: var(--bg-tertiary);">
+                <h4 style="margin-bottom: 10px;">➕ Criar Nova Função</h4>
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" id="newRoleName" class="input-field" placeholder="Nome da função (ex: Cozinha, Louvor)">
+                    <button class="btn-primary" onclick="createNewTeamRole('${retiroId}')">Criar Função</button>
+                </div>
+            </div>
+
+            <div id="rolesContainer">
+                ${allRoles.length === 0 ? '<p class="help-text">Nenhuma função criada. Crie uma função para começar a adicionar pessoas.</p>' : ''}
+                ${allRoles.map(role => {
+                    const members = team.filter(m => m.role === role);
+                    const safeRole = escapeHtml(role);
+                    const roleId = 'role-' + role.replace(/[^a-zA-Z0-9]/g, '');
+                    
+                    return `
+                    <div class="card" style="margin-bottom: 1.5rem; overflow: visible;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <h3 style="margin: 0; color: var(--primary); font-size: 1.2rem;">${safeRole} <span class="badge badge-secondary" style="font-size: 0.6em; vertical-align: middle;">${members.length}</span></h3>
+                                <button class="btn-icon" onclick="toggleTeamRoleCard(this)" style="padding: 2px 8px; font-size: 0.8em;">➖</button>
+                            </div>
+                            <button class="btn-icon" onclick="deleteTeamRole('${retiroId}', '${role.replace(/'/g, "\\'")}')" title="Excluir Função e Membros" style="color: var(--danger);">🗑️</button>
+                        </div>
+                        
+                        <div class="card-content" style="overflow: visible;">
+                            <div class="table-container" style="margin-bottom: 15px; box-shadow: none; border: 1px solid var(--border);">
+                                <table class="table" style="margin: 0;">
+                                    <thead>
+                                        <tr>
+                                            <th>Nome</th>
+                                            <th>Valor (R$)</th>
+                                            <th>Pago (R$)</th>
+                                            <th>Status</th>
+                                            <th style="width: 50px;">Ações</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${members.length === 0 ? '<tr><td colspan="5" style="text-align: center; color: var(--text-tertiary); font-style: italic;">Ninguém nesta função ainda.</td></tr>' : 
+                                        members.map(m => {
+                                            const price = m.price !== undefined ? m.price : 0;
+                                            const paid = m.paid || 0;
+                                            let statusBadge = '';
+                                            
+                                            if (paid >= price && price > 0) statusBadge = '<span class="badge badge-success">Pago</span>';
+                                            else if (paid > 0) statusBadge = '<span class="badge badge-warning">Parcial</span>';
+                                            else if (price > 0) statusBadge = '<span class="badge badge-danger">Pendente</span>';
+                                            else statusBadge = '<span class="badge badge-secondary">Isento</span>';
+
+                                            return `
+                                            <tr>
+                                                <td>${escapeHtml(m.nome)}</td>
+                                                <td>
+                                                    <input type="number" class="input-field" style="width: 80px; padding: 4px;" value="${price}" onchange="updateParticipantPayment('${m.id}', 'price', this.value)" step="0.01">
+                                                </td>
+                                                <td>
+                                                    <div style="display: flex; align-items: center; gap: 5px;">
+                                                        <input type="number" class="input-field" style="width: 80px; padding: 4px;" value="${paid}" onchange="updateParticipantPayment('${m.id}', 'paid', this.value)" step="0.01">
+                                                        <button class="btn-icon" onclick="updateParticipantPayment('${m.id}', 'paid', '${price}')" title="Pagar Total" style="color: var(--success); padding: 2px;">✅</button>
+                                                    </div>
+                                                </td>
+                                                <td>${statusBadge}</td>
+                                                <td>
+                                                    <button class="btn-icon" style="color: var(--danger);" onclick="removeRetiroParticipant('${m.id}', '${retiroId}')" title="Remover da equipe">🗑️</button>
+                                                </td>
+                                            </tr>
+                                            `;
+                                        }).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div style="position: relative;">
+                                <input type="text" placeholder="🔍 Buscar pessoa para adicionar em ${safeRole}..." class="input-field" onkeyup="searchPeopleForSpecificRole('${retiroId}', '${role.replace(/'/g, "\\'")}', this.value, this)" autocomplete="off">
+                                <div class="search-role-results" style="position: absolute; top: 100%; left: 0; right: 0; background: var(--bg-primary); border: 1px solid var(--border); max-height: 200px; overflow-y: auto; z-index: 1000; display: none; box-shadow: 0 4px 15px rgba(0,0,0,0.2); border-radius: 0 0 8px 8px;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+        `;
+    }
+
+    container.innerHTML = html;
+}
+
+async function createNewTeamRole(retiroId) {
+    const input = document.getElementById('newRoleName');
+    const roleName = input.value.trim();
+    
+    if (!roleName) return showToast('Digite o nome da função.', 'warning');
+    
+    try {
+        await db.collection('retiros').doc(retiroId).update({
+            roles: firebase.firestore.FieldValue.arrayUnion(roleName)
+        });
+        input.value = '';
+        showToast('Função criada!', 'success');
+        db.collection('retiros').doc(currentRetiroId).get().then(doc => renderRetiroGestao(currentRetiroId, doc.data()));
+    } catch (e) {
+        showToast('Erro ao criar função: ' + e.message, 'error');
+    }
+}
+
+async function deleteTeamRole(retiroId, roleName) {
+    if (!confirm(`Tem certeza que deseja excluir a função "${roleName}"?\nIsso também removerá todas as pessoas desta função.`)) return;
+    
+    try {
+        // Remover a função da lista de roles
+        await db.collection('retiros').doc(retiroId).update({
+            roles: firebase.firestore.FieldValue.arrayRemove(roleName)
+        });
+        
+        // Remover participantes dessa função
+        const snapshot = await db.collection('retiro_participantes')
+            .where('groupId', '==', currentGroupId)
+            .where('retiroId', '==', retiroId)
+            .where('role', '==', roleName)
+            .get();
+            
+        const batch = db.batch();
+        snapshot.docs.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+        
+        showToast('Função e membros excluídos.', 'success');
+        db.collection('retiros').doc(currentRetiroId).get().then(doc => renderRetiroGestao(currentRetiroId, doc.data()));
+        await updateVisibleRetirosMap();
+    } catch (e) {
+        showToast('Erro ao excluir função: ' + e.message, 'error');
+    }
+}
+
+function searchPeopleForSpecificRole(retiroId, roleName, query, inputElement) {
+    // Encontrar o container de resultados irmão do input
+    const container = inputElement.nextElementSibling;
+    
+    if (!query || query.length < 2) {
+        container.style.display = 'none';
+        return;
+    }
+
+    const lowerQuery = query.toLowerCase();
+    const matches = pessoas.filter(p => p.nome.toLowerCase().includes(lowerQuery)).slice(0, 5);
+    
+    if (matches.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+
+    container.innerHTML = matches.map(p => `
+        <div style="padding: 10px; cursor: pointer; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between;" onclick="addRetiroTeamMemberWithRole('${retiroId}', '${p.id}', '${escapeHtml(p.nome)}', '${roleName.replace(/'/g, "\\'")}')">
+            <span>${escapeHtml(p.nome)}</span>
+            <span class="badge badge-primary" style="font-size: 0.7em;">Adicionar</span>
+        </div>
+    `).join('');
+    container.style.display = 'block';
+}
+
+function searchPeopleForRetiro(retiroId, query) {
+    const container = document.getElementById('searchRetiroResults');
+    if (!query || query.length < 2) {
+        container.style.display = 'none';
+        return;
+    }
+
+    const lowerQuery = query.toLowerCase();
+    const matches = pessoas.filter(p => p.nome.toLowerCase().includes(lowerQuery)).slice(0, 5);
+    
+    if (matches.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+
+    container.innerHTML = matches.map(p => `
+        <div style="padding: 10px; cursor: pointer; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between;" onclick="addRetiroParticipant('${retiroId}', '${p.id}', '${p.nome}', 'interno')">
+            <span>${escapeHtml(p.nome)}</span>
+            <span class="badge badge-success" style="font-size: 0.7em;">Cadastrado</span>
+        </div>
+    `).join('');
+    container.style.display = 'block';
+}
+
+async function updateRetiroDefaultPrice(retiroId) {
+    const price = parseFloat(document.getElementById('retiroDefaultPrice').value);
+    if (isNaN(price)) return showToast('Valor inválido', 'warning');
+
+    try {
+        await db.collection('retiros').doc(retiroId).update({ defaultPrice: price });
+        showToast('Valor padrão atualizado!', 'success');
+        // Recarregar para atualizar cálculos
+        const retiroDoc = await db.collection('retiros').doc(retiroId).get();
+        renderRetiroGestao(retiroId, retiroDoc.data());
+    } catch (e) {
+        showToast('Erro ao atualizar: ' + e.message, 'error');
+    }
+}
+
+async function updateRetiroDefaultTeamPrice(retiroId) {
+    const price = parseFloat(document.getElementById('retiroDefaultTeamPrice').value);
+    if (isNaN(price)) return showToast('Valor inválido', 'warning');
+
+    try {
+        await db.collection('retiros').doc(retiroId).update({ defaultTeamPrice: price });
+        
+        if (confirm('Deseja atualizar o valor para todos os membros da equipe já cadastrados?\nIsso sobrescreverá valores individuais definidos anteriormente.')) {
+            const snapshot = await db.collection('retiro_participantes')
+                .where('groupId', '==', currentGroupId)
+                .where('retiroId', '==', retiroId)
+                .where('category', '==', 'equipe')
+                .get();
+            
+            const chunks = [];
+            const docs = snapshot.docs;
+            for (let i = 0; i < docs.length; i += 500) {
+                chunks.push(docs.slice(i, i + 500));
+            }
+
+            for (const chunk of chunks) {
+                const batch = db.batch();
+                chunk.forEach(doc => {
+                    batch.update(doc.ref, { price: price });
+                });
+                await batch.commit();
+            }
+            showToast('Valor padrão e membros atualizados!', 'success');
+        } else {
+            showToast('Valor padrão atualizado (apenas novos)!', 'success');
+        }
+
+        // Recarregar para atualizar visualização
+        const retiroDoc = await db.collection('retiros').doc(retiroId).get();
+        renderRetiroGestao(retiroId, retiroDoc.data());
+    } catch (e) {
+        showToast('Erro ao atualizar: ' + e.message, 'error');
+    }
+}
+
+async function updateParticipantPayment(partId, field, value) {
+    const numValue = parseFloat(value);
+    if (isNaN(numValue)) return;
+
+    try {
+        await db.collection('retiro_participantes').doc(partId).update({
+            [field]: numValue
+        });
+        // Recarregar silenciosamente para atualizar totais e status
+        const retiroDoc = await db.collection('retiros').doc(currentRetiroId).get();
+        renderRetiroGestao(currentRetiroId, retiroDoc.data());
+    } catch (e) {
+        showToast('Erro ao salvar pagamento: ' + e.message, 'error');
+    }
+}
+
+async function addRetiroParticipant(retiroId, personId, name, type) {
+    if (!name) return showToast('Nome é obrigatório', 'warning');
+
+    // Verificar duplicidade no retiro
+    const existing = await db.collection('retiro_participantes')
+        .where('groupId', '==', currentGroupId)
+        .where('retiroId', '==', retiroId)
+        .where('nome', '==', name) // Verificação simples por nome
+        .get();
+
+    if (!existing.empty) {
+        return showToast('Esta pessoa já está na lista do retiro.', 'warning');
+    }
+
+    try {
+        // Buscar valor padrão do retiro
+        const retiroDoc = await db.collection('retiros').doc(retiroId).get();
+        const defaultPrice = retiroDoc.data().defaultPrice || 0;
+
+        await db.collection('retiro_participantes').add({
+            retiroId,
+            groupId: currentGroupId,
+            personId: personId || null,
+            nome: name,
+            tipo: type,
+            addedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            price: defaultPrice,
+            paid: 0
+        });
+
+        // Limpar inputs
+        const searchInput = document.getElementById('searchRetiroPart');
+        const extInput = document.getElementById('externalNameRetiro');
+        const results = document.getElementById('searchRetiroResults');
+        if (searchInput) searchInput.value = '';
+        if (extInput) extInput.value = '';
+        if (results) results.style.display = 'none';
+
+        // Recarregar tela de gestão
+        renderRetiroGestao(retiroId, retiroDoc.data());
+        showToast('Participante adicionado!', 'success');
+        await updateVisibleRetirosMap();
+    } catch (error) {
+        showToast('Erro ao adicionar: ' + error.message, 'error');
+    }
+}
+
+async function addRetiroTeamMemberWithRole(retiroId, personId, name, role) {
+    // Verificar duplicidade
+    const existing = await db.collection('retiro_participantes')
+        .where('groupId', '==', currentGroupId)
+        .where('retiroId', '==', retiroId)
+        .where('personId', '==', personId)
+        .get();
+
+    if (!existing.empty) {
+        return showToast('Esta pessoa já está no retiro.', 'warning');
+    }
+
+    try {
+        // Buscar valor padrão da equipe
+        const retiroDoc = await db.collection('retiros').doc(retiroId).get();
+        const defaultTeamPrice = retiroDoc.data().defaultTeamPrice || 0;
+
+        await db.collection('retiro_participantes').add({
+            retiroId,
+            groupId: currentGroupId,
+            personId,
+            nome: name,
+            tipo: 'interno',
+            category: 'equipe', // Marca como equipe
+            role: role,
+            addedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            price: defaultTeamPrice,
+            paid: 0
+        });
+
+        
+        db.collection('retiros').doc(retiroId).get().then(doc => renderRetiroGestao(retiroId, doc.data()));
+        showToast('Membro da equipe adicionado!', 'success');
+    } catch (error) {
+        showToast('Erro ao adicionar: ' + error.message, 'error');
+    }
+}
+
+async function removeRetiroParticipant(partId, retiroId) {
+    if (!confirm('Remover participante?')) return;
+    try {
+        await db.collection('retiro_participantes').doc(partId).delete();
+        
+        const retiroDoc = await db.collection('retiros').doc(retiroId).get();
+        renderRetiroGestao(retiroId, retiroDoc.data());
+        
+        await updateVisibleRetirosMap();
+    } catch (e) {
+        showToast('Erro ao remover.', 'error');
+    }
+}
+
+function showRetiroExportOptions() {
+    const retiroId = currentRetiroId;
+    if (!retiroId) return;
+
+    const modalBody = `
+        <h2>Exportar Relatório do Retiro</h2>
+        <p style="margin-bottom: 1.5rem; color: var(--text-secondary);">Selecione a lista que deseja exportar:</p>
+        
+        <div style="margin-bottom: 1.5rem;">
+            <h4 style="margin-bottom: 10px; color: var(--primary);">👥 Participantes</h4>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <button class="btn-secondary" onclick="exportRetiroExcel('${retiroId}', 'participantes'); closeModal()" style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 1rem;">
+                    <span style="font-size: 1.5rem;">📊</span>
+                    <span>Excel</span>
+                </button>
+                <button class="btn-secondary" onclick="exportRetiroPDF('${retiroId}', 'participantes'); closeModal()" style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 1rem;">
+                    <span style="font-size: 1.5rem;">📄</span>
+                    <span>PDF</span>
+                </button>
+            </div>
+        </div>
+
+        <div>
+            <h4 style="margin-bottom: 10px; color: var(--primary);">🛠️ Equipe de Trabalho</h4>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <button class="btn-secondary" onclick="exportRetiroExcel('${retiroId}', 'equipe'); closeModal()" style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 1rem;">
+                    <span style="font-size: 1.5rem;">📊</span>
+                    <span>Excel</span>
+                </button>
+                <button class="btn-secondary" onclick="exportRetiroPDF('${retiroId}', 'equipe'); closeModal()" style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 1rem;">
+                    <span style="font-size: 1.5rem;">📄</span>
+                    <span>PDF</span>
+                </button>
+            </div>
+        </div>
+    `;
+    
+    showModal(modalBody);
+}
+
+async function exportRetiroExcel(retiroId, type = 'participantes') {
+    try {
+        const retiroDoc = await db.collection('retiros').doc(retiroId).get();
+        const retiro = retiroDoc.data();
+        const defaultPrice = retiro.defaultPrice || 0;
+
+        const snapshot = await db.collection('retiro_participantes')
+            .where('groupId', '==', currentGroupId)
+            .where('retiroId', '==', retiroId)
+            .get();
+
+        let participants = snapshot.docs.map(doc => doc.data());
+        
+        // Filtrar por tipo
+        if (type === 'equipe') {
+            participants = participants.filter(p => p.category === 'equipe');
+        } else {
+            participants = participants.filter(p => p.category !== 'equipe');
+        }
+        
+        participants.sort((a, b) => a.nome.localeCompare(b.nome));
+
+        const rows = participants.map(p => {
+            const price = p.price !== undefined ? p.price : (type === 'equipe' ? 0 : defaultPrice);
+            const paid = p.paid || 0;
+            let status = 'Pendente';
+            if (paid >= price && price > 0) status = 'Pago';
+            else if (paid > 0) status = 'Parcial';
+            else if (price === 0) status = 'Isento';
+
+            const row = {
+                "Nome": p.nome,
+            };
+
+            if (type === 'equipe') {
+                row["Função"] = p.role || '-';
+            } else {
+                row["Tipo"] = p.tipo === 'interno' ? 'Cadastrado' : 'Externo';
+            }
+
+            row["Valor (R$)"] = price;
+            row["Pago (R$)"] = paid;
+            row["Status"] = status;
+
+            return row;
+        });
+
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(rows);
+        
+        if (type === 'equipe') {
+            ws['!cols'] = [{wch: 30}, {wch: 20}, {wch: 15}, {wch: 15}, {wch: 15}];
+        } else {
+            ws['!cols'] = [{wch: 30}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 15}];
+        }
+        
+        const sheetName = type === 'equipe' ? "Equipe" : "Participantes";
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        
+        const suffix = type === 'equipe' ? '_Equipe' : '_Participantes';
+        const fileName = `Retiro_${retiro.nome.replace(/[^a-z0-9]/gi, '_')}${suffix}.xlsx`;
+        XLSX.writeFile(wb, fileName);
+        showToast(`Relatório de ${type} gerado!`, 'success');
+    } catch (error) {
+        console.error(error);
+        showToast('Erro ao exportar: ' + error.message, 'error');
+    }
+}
+
+async function exportRetiroPDF(retiroId, type = 'participantes') {
+    if (!window.jspdf) return showToast("Erro: Biblioteca PDF não carregada.", "error");
+    
+    try {
+        const retiroDoc = await db.collection('retiros').doc(retiroId).get();
+        const retiro = retiroDoc.data();
+        const defaultPrice = retiro.defaultPrice || 0;
+
+        const snapshot = await db.collection('retiro_participantes')
+            .where('groupId', '==', currentGroupId)
+            .where('retiroId', '==', retiroId)
+            .get();
+
+        let participants = snapshot.docs.map(doc => doc.data());
+        
+        // Filtrar por tipo
+        if (type === 'equipe') {
+            participants = participants.filter(p => p.category === 'equipe');
+        } else {
+            participants = participants.filter(p => p.category !== 'equipe');
+        }
+
+        participants.sort((a, b) => a.nome.localeCompare(b.nome));
+
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+        
+        const groupName = document.getElementById('groupNameSidebar')?.textContent || 'Grupo';
+        doc.setFontSize(10);
+        doc.setTextColor(100);
+        doc.text(groupName.toUpperCase(), 14, 15);
+
+        doc.setFontSize(18);
+        doc.setTextColor(37, 99, 235);
+        const titleSuffix = type === 'equipe' ? ' - Equipe de Trabalho' : ' - Participantes';
+        doc.text(`Relatório: ${retiro.nome}${titleSuffix}`, 14, 25);
+        
+        doc.setFontSize(10);
+        doc.setTextColor(100);
+        doc.text(`Data: ${formatDate(retiro.data)} | Local: ${retiro.local || '-'}`, 14, 32);
+
+        const tableBody = participants.map(p => {
+            const price = p.price !== undefined ? p.price : (type === 'equipe' ? 0 : defaultPrice);
+            const paid = p.paid || 0;
+            let status = 'Pendente';
+            if (paid >= price && price > 0) status = 'Pago';
+            else if (paid > 0) status = 'Parcial';
+            else if (price === 0) status = 'Isento';
+            
+            const row = [p.nome];
+            
+            if (type === 'equipe') {
+                row.push(p.role || '-');
+            } else {
+                row.push(p.tipo === 'interno' ? 'Cadastrado' : 'Externo');
+            }
+            
+            row.push(`R$ ${price.toFixed(2)}`);
+            row.push(`R$ ${paid.toFixed(2)}`);
+            row.push(status);
+            
+            return row;
+        });
+
+        const headers = type === 'equipe' 
+            ? [['Nome', 'Função', 'Valor', 'Pago', 'Status']]
+            : [['Nome', 'Tipo', 'Valor', 'Pago', 'Status']];
+
+        doc.autoTable({
+            head: headers,
+            body: tableBody,
+            startY: 40,
+            theme: 'grid',
+            headStyles: { fillColor: [37, 99, 235], textColor: 255 },
+            styles: { fontSize: 10, cellPadding: 3 },
+            didParseCell: function(data) {
+                if (data.section === 'body' && data.column.index === 4) {
+                    if (data.cell.raw === 'Pago') data.cell.styles.textColor = [22, 163, 74];
+                    else if (data.cell.raw === 'Parcial') data.cell.styles.textColor = [217, 119, 6];
+                    else if (data.cell.raw === 'Isento') data.cell.styles.textColor = [100, 116, 139];
+                    else data.cell.styles.textColor = [220, 38, 38];
+                }
+            }
+        });
+        
+        // Summary
+        let totalExpected = 0;
+        let totalPaid = 0;
+        participants.forEach(p => {
+            const price = p.price !== undefined ? p.price : (type === 'equipe' ? 0 : defaultPrice);
+            const paid = p.paid || 0;
+            totalExpected += Number(price);
+            totalPaid += Number(paid);
+        });
+        
+        const finalY = doc.lastAutoTable.finalY + 10;
+        doc.setFontSize(11);
+        doc.setTextColor(0);
+        doc.text(`Total ${type === 'equipe' ? 'Membros' : 'Participantes'}: ${participants.length}`, 14, finalY);
+        doc.text(`Total Arrecadado: R$ ${totalPaid.toFixed(2)} / R$ ${totalExpected.toFixed(2)}`, 14, finalY + 6);
+
+        const suffix = type === 'equipe' ? '_Equipe' : '_Participantes';
+        doc.save(`Retiro_${retiro.nome.replace(/[^a-z0-9]/gi, '_')}${suffix}.pdf`);
+        showToast('PDF gerado com sucesso!', 'success');
+
+    } catch (error) {
+        console.error(error);
+        showToast('Erro ao exportar: ' + error.message, 'error');
+    }
 }
 
 // ==================== LAYOUT DASHBOARD ====================
@@ -6327,12 +7961,12 @@ document.addEventListener('click', (e) => {
 document.addEventListener('DOMContentLoaded', () => {
     const searchPessoa = document.getElementById('searchPessoa');
     if (searchPessoa) {
-        searchPessoa.addEventListener('input', loadPessoas);
+        searchPessoa.addEventListener('input', debounce(() => loadPessoas(), 300));
     }
     
     const searchEvento = document.getElementById('searchEvento');
     if (searchEvento) {
-        searchEvento.addEventListener('input', loadEventos);
+        searchEvento.addEventListener('input', debounce(() => loadEventos(), 300));
     }
     
     // Inicializar Drag and Drop do Dashboard
